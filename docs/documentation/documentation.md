@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Installation
-id: installation
+id: documentation
 section: documentation
 ---
 
@@ -12,7 +12,7 @@ Brightspot CMS is built on top of the [Dari Framework](http://dariframework.org)
 Installing Brightspot CMS requires five main steps. We will walk through these in more detail below.
 
 - Create Database
-- Create Application Server
+- Install Application Server
 - Install Solr DB
 - Use Maven to run archetype embed Brightspot CMS
 - Start Application Server
@@ -55,7 +55,7 @@ Copy Solr's DB directory into $TOMCAT_HOME:
 
 `cp -r $SOLR_DIST/example/solr $TOMCAT_HOME`
 
-Replace the default Solr `schema.xml` and `solrconfig.xml` files with Dari configurations downloaded from the Dari repository - [here](https://github.com/perfectsense/dari/tree/master/etc/solr)
+Replace the default Solr `schema.xml` and `solrconfig.xml` files with Dari configurations downloaded from the Dari repository - [here](https://github.com/perfectsense/dari/tree/master/etc/solr) - *Note, Make sure the filenames remain `solrconfig.xml` and `schema.xml`*
 
 `cp solrconfig.xml $TOMCAT_HOME/solr/conf/solrconfig.xml`
 
@@ -124,39 +124,48 @@ The new file will need to be configured. Replace the values outlined below with 
 `$TOMCAT_HOME` - The directory where tomcat is installed.
 
 `$TOMCAT_PORT` - The port at which tomcat will run. Default is 8080. You can find this value in $TOMCAT_HOME/conf/server.xml by looking for: "&lt;Connector port="
+
     
 ### Maven
 
-[Download](http://maven.apache.org/download.html) and install Maven.
+If you do not already have Maven, [download](http://maven.apache.org/download.html) and install. On the command line type `mvn -v` to see your Maven Version number.
 
-You will need to create a Maven project in which we will embed the CMS application. Begin by running the `mvn archetype` script below, filling in your application's Group ID and Artifact ID. This will create a Maven folder structure. On your command line, cd to the directory you want to build your project within. **Note:** *This should not be within your $TOMCAT_HOME.* 
+You will need to create a Maven project in which we will embed the CMS application. 
+
+Run the following Archetype to create the project structure.
+
+	mvn archetype:generate -B \
+    	-DarchetypeRepository=http://public.psddev.com/maven \
+    	-DarchetypeGroupId=com.psddev \
+    	-DarchetypeArtifactId=cms-app-archetype \
+    	-DarchetypeVersion=2.0-SNAPSHOT \
+    	-DgroupId=yourGroupID \
+    	-DartifactId=yourProject
+    	
+*Note, the GroupID and Project name must not contain spaces or hyphens*
+
+Once your project has been created access your new pom.xml and add the following dependency, for Solr.
+
+        <dependency>
+            <groupId>org.apache.solr</groupId>
+            <artifactId>solr-solrj</artifactId>
+            <version>3.6.0</version>
+        </dependency>
 
 
-### Create Project
+### Embed CMS
 
-MYARTIFACTID will be your project name and MYGROUP will be the directory in which your Java classes (objects) will be placed. Running the archetype will create a pom.xml, along with the rest of the Maven folder structure.
+Once your required folder structure is in place run a `mvn clean install` within  `yourProject` folder. *You can confirm you are in the correct location if you can see your pom.xml file.*
 
-Once your required folder structure is in place run a `mvn clean install` within your `MYARTIFACTID` folder. *You can confirm you are in the correct location if you can see your pom.xml file.*
+A war file will now be created in the `target` directory. The CMS application will be embedded into your project.
 
-A war file will now be created in the `target` directory. The CMS application will be embedded into your project: MYARTIFACTID -> target -> MYARTIFACTID -> CMS
+Next step is to copy your new war file to `$TOMCAT_HOME/webapps` - rename this to be `ROOT.war`. *Note, the default Apache ROOT directory must be removed.*
 
-Next step is to create a symbolic link pointing from your Tomcat `ROOT` to your project. This only needs to be created once. The contents found within the default Apache ROOT in Tomcat must be removed before creating this new link to ROOT. This symbolic link allows you to run your application locally with updates seen instantly on your local host.
-
-`ln -s path/to/your/MYARTIFACTID/src/main/webapp path/to/your/tomcat/webapps/ROOT`
-
-Note - on a Windows machine, create the Symbolic link with:
-
-`mklink /d "C:\tomcat\webapps\ROOT" "C:\ProjectName\src\main\webapp"`
-
-Once the symbolic link is in place run a `mvn war:inplace`.
-
-`cd path/to/your/MYARTIFACTID/`
-
-`mvn war:inplace`
 
 ### Start Tomcat
 
 `./bin/startup.sh`
+
 
 ### Access your CMS
 
@@ -164,7 +173,7 @@ The first time that you access your CMS you will need to perform a `_debug/init`
 
 <http://localhost:8080/_debug/init>
 
-The function of the `_debug/init` is to update the CMS application that is embedded within your project.
+The function of the `_debug/init` is to initialize the CMS Tool Application and widgets.
 
 <img src="http://docs.brightspot.s3.amazonaws.com/init.png"/>
 

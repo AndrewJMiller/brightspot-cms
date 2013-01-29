@@ -10,6 +10,9 @@ com.psddev.dari.db.State
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requireUser()) {
+    return;
+}
 
 // --- Presentation ---
 
@@ -35,7 +38,7 @@ if (object != null) {
         if (typeof jQuery !== 'undefined') (function($) {
             var $page = $('#<%= pageId %>');
             var $source = $page.popup('source');
-            $source.editor('enhancement', {
+            $source.rte('enhancement', {
                 'id': '<%= state.getId() %>',
                 'label': '<%= wp.js(state.getLabel()) %>'
             });

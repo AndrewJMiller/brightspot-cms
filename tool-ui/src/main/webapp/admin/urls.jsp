@@ -14,6 +14,10 @@ java.util.UUID
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requirePermission("area/admin/adminUrls")) {
+    return;
+}
+
 Directory selected = (Directory) wp.findOrReserve(Directory.class);
 State state = State.getInstance(selected);
 
@@ -93,7 +97,7 @@ PaginatedResult<Object> items = Query
 
                 <form method="post" action="<%= wp.objectUrl(null, selected) %>">
 
-                    <table><tbody>
+                    <table class="table-striped"><tbody>
                         <%
                         int i = 0;
                         for (Object item : items.getItems()) {

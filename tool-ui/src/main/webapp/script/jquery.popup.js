@@ -1,107 +1,21 @@
-if (typeof jQuery !== 'undefined') (function($) {
+/** Inline popup. */
+(function($, win, undef) {
 
-var options = {
-    'padding': {
-        'left': 35,
-        'right': 35,
-        'top': 20
-    }
-};
+var $win = $(win),
+        doc = win.document;
 
-// Inline popup.
-$.plugin('popup', {
-
-// Opens the popup.
-'open': function() {
-    this.popup('container').trigger('open');
-    return this;
-},
-
-// Closes the popup.
-'close': function() {
-    this.popup('container').trigger('close');
-    return this;
-},
-
-// Returns the enclosing element that contains the popup.
-'container': function() {
-    return this.closest('.popup');
-},
-
-// Returns the popup content element.
-'content': function() {
-    return this.popup('container').find('> .content');
-},
-
-// Returns the source element that triggered the popup to open.
-'source': function($newSource) {
-
-    if (typeof $newSource === 'undefined') {
-        return this.popup('container').popup('data', '$source');
-
-    } else {
-        var $container = this.popup('container');
-        $container.popup('data', '$source', $newSource);
-
-        // Change position.
-        var sourceOffset = $newSource.offset();
-        var popupWidth = $container.outerWidth();
-
-        // Make sure left is within bounds.
-        var markerDelta = 0;
-        var left = sourceOffset.left + ($newSource.outerWidth() - popupWidth) / 2;
-        if (left < options.padding.left) {
-            markerDelta = left - options.padding.left;
-            left = options.padding.left;
-        } else {
-            var leftDelta = left + popupWidth - $(window).width() + options.padding.right;
-            if (leftDelta > 0) {
-                markerDelta = leftDelta;
-                left -= leftDelta;
-            }
+$.plugin2('popup', {
+    '_defaultOptions': {
+        'padding': {
+            'left': 35,
+            'right': 35,
+            'top': 20
         }
-
-        // Create a arrow-like marker.
-        var $content = $container.popup('content');
-        var $marker = $content.find('> .marker');
-        if ($marker.length == 0) {
-            $marker = $('<div/>', { 'class': 'marker' });
-            $content.append($marker);
-        }
-        var markerLeft = (popupWidth  - $marker.outerWidth()) / 2 + markerDelta
-        $marker.css('left', markerLeft < 5 ? 5 : markerLeft);
-
-        // Make sure top is within bounds.
-        var top = sourceOffset.top + $newSource.outerHeight();
-        if (top < 30) {
-            top = 30;
-        }
-
-        // Adjust left/top if position is fixed.
-        var $newSourceParent = $newSource.offsetParent();
-        var isFixed = $newSourceParent.css('position') == 'fixed';
-        if (isFixed) {
-            left -= $(window).scrollLeft();
-            top -= $(window).scrollTop();
-        }
-
-        $container.css({
-            'left': left,
-            'margin': 0,
-            'position': isFixed ? 'fixed' : 'absolute',
-            'top': top,
-            'z-index': $newSourceParent.zIndex() + 1
-        });
-
-        return this;
-    }
-},
-
-// Initializes the popup.
-'init': function() {
-    return this.each(function() {
-
-        var $inner = $(this);
+    },
+    
+    '_create': function(element) {
+        var $inner = $(element);
+        var options = this.option();
         var $container = $('<div/>', { 'class': 'popup' });
         var $content = $('<div/>', { 'class': 'content' });
         var $closeButton = $('<div/>', { 'class': 'closeButton' });
@@ -113,8 +27,28 @@ $.plugin('popup', {
 
         // Bind open and close events.
         $container.bind('open.popup', function() {
-            $(this).show();
+            var $original = $(this);
+            var scrollLeft = $original.data('popup-scrollLeft');
+            var scrollTop = $original.data('popup-scrollTop');
+            if (typeof scrollLeft !== 'number' && typeof scrollTop !== 'number') {
+                $original.data('popup-scrollLeft', $win.scrollLeft());
+                $original.data('popup-scrollTop', $win.scrollTop());
+            }
+            $original.show();
         });
+
+        $container.bind('restoreOriginalPosition.popup', function() {
+            var $original = $(this);
+            var scrollLeft = $original.data('popup-scrollLeft');
+            var scrollTop = $original.data('popup-scrollTop');
+            $original.removeData('popup-scrollLeft');
+            $original.removeData('popup-scrollTop');
+            if (typeof scrollLeft === 'number' && typeof scrollTop === 'number') {
+                $win.scrollLeft(scrollLeft);
+                $win.scrollTop(scrollTop);
+            }
+        });
+
         $container.bind('close.popup', function() {
             var $original = $(this);
             $original.hide();
@@ -126,25 +60,124 @@ $.plugin('popup', {
                 }
             });
         });
+
         $closeButton.bind('click.popup', function() {
             $(this).popup('close');
         });
 
-        var $body = $(document.body);
+        var $body = $(doc.body);
         $content.append($inner);
         $content.append($closeButton);
         $container.append($content);
         $body.append($container);
-    });
-}
+    },
 
+    // Opens the popup.
+    'open': function() {
+        this.$caller.popup('container').trigger('open');
+        return this.$caller;
+    },
+
+    'restoreOriginalPosition': function() {
+        this.$caller.popup('container').trigger('restoreOriginalPosition');
+        return this.$caller;
+    },
+
+    // Closes the popup.
+    'close': function() {
+        this.container().trigger('close');
+        return this.$caller;
+    },
+
+    // Returns the enclosing element that contains the popup.
+    'container': function() {
+        return this.$caller.closest('.popup');
+    },
+
+    // Returns the popup content element.
+    'content': function() {
+        return this.$caller.popup('container').find('> .content');
+    },
+
+    // Returns the source element that triggered the popup to open.
+    'source': function($newSource, event) {
+        var options = this.option();
+
+        if (event &&
+                ($newSource.height() < 30 ||
+                typeof event.pageX !== 'number' ||
+                typeof event.pageY !== 'number')) {
+            event = undef;
+        }
+
+        if (typeof $newSource === 'undefined') {
+            var container = this.$caller.popup('container')[0];
+            return container ? $.data(container, 'popup-$source') : null;
+
+        } else {
+            var $container = this.$caller.popup('container');
+            $container.each(function() {
+                $.data(this, 'popup-$source', $newSource);
+            });
+
+            // Change position.
+            var sourceOffset = $newSource.offset();
+            var popupWidth = $container.outerWidth();
+
+            // Make sure left is within bounds.
+            var markerDelta = 0;
+            var left = event ? event.pageX - popupWidth / 2 : sourceOffset.left + ($newSource.outerWidth() - popupWidth) / 2;
+            if (left < options.padding.left) {
+                markerDelta = left - options.padding.left;
+                left = options.padding.left;
+            } else {
+                var leftDelta = left + popupWidth - $(doc).width() + options.padding.right;
+                if (leftDelta > 0) {
+                    markerDelta = leftDelta;
+                    left -= leftDelta;
+                }
+            }
+
+            // Create a arrow-like marker.
+            var $content = $container.popup('content');
+            var $marker = $content.find('> .marker');
+            if ($marker.length === 0) {
+                $marker = $('<div/>', { 'class': 'marker' });
+                $content.append($marker);
+            }
+            var markerLeft = (popupWidth  - $marker.outerWidth()) / 2 + markerDelta;
+            $marker.css('left', markerLeft < 5 ? 5 : markerLeft);
+
+            // Make sure top is within bounds.
+            var top = event ? event.pageY : sourceOffset.top + $newSource.outerHeight();
+            if (top < 30) {
+                top = 30;
+            }
+
+            // Adjust left/top if position is fixed.
+            var isFixedPosition = $newSource.isFixedPosition();
+            if (isFixedPosition) {
+                left -= $(window).scrollLeft();
+                top -= $(window).scrollTop();
+            }
+
+            $container.css({
+                'left': left,
+                'margin': 0,
+                'position': isFixedPosition ? 'fixed' : 'absolute',
+                'top': top,
+                'z-index': $newSource.parent().zIndex() + 1
+            });
+
+            return this.$caller;
+        }
+    }
 });
 
 // Clicking outside the popups should close them all.
-var $window = $(window);
-$window.click(function(event) {
+$win.click(function(event) {
     var target = event.target;
-    if ($(target).closest('#editorMainToolbar').length == 0 && $(target).popup('container').length == 0) {
+    if ($(target).popup('container').length === 0) {
         $('.popup').each(function() {
             var $container = $(this);
 
@@ -161,8 +194,8 @@ $window.click(function(event) {
 });
 
 // Hitting ESC should close all popups too.
-$window.keydown(function(event) {
-    if (event.keyCode == 27) {
+$win.keydown(function(event) {
+    if (event.which === 27) {
         var $containers = $('.popup');
         if ($containers.length > 0) {
             $containers.popup('close');
@@ -173,4 +206,4 @@ $window.keydown(function(event) {
     }
 });
 
-})(jQuery);
+}(jQuery, window));

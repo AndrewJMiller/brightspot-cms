@@ -83,14 +83,16 @@ if ((Boolean) request.getAttribute("isFormPost")) {
         </ol>
     </div>
 <% } else { %>
-    <div class="smallInput repeatableText">
+    <div class="smallInput">
         <select multiple name="<%= wp.h(textName) %>">
             <% for (ObjectField.Value value : validValues) { %>
                 <%
                 boolean containsValue = false;
                 if (fieldValue != null) {
                     for (Object fieldValueItem : fieldValue) {
-                        if (fieldValueItem.getClass().isEnum()) {
+                        if (fieldValueItem == null) {
+
+                        } else if (fieldValueItem.getClass().isEnum()) {
                             Enum<?> e = (Enum<?>) fieldValueItem;
                             if (e.name().equals(value.getValue())) {
                                 containsValue = true;

@@ -6,33 +6,23 @@ id: adding-a-tool
 
 ## Adding a Tool
 
-You can add your own Tools or Applications to Brightspot. By extending the Tool class you can add new areas (Top Navigation) and Global and Remote Widgets.  
+You can add your own Tools, Applications or Settings to Brightspot. By extending the Tool class you can add new areas (Top Navigation) and Global and Remote Widgets, as well as Application specific settings, such as email addresses for form submissions, Analytics IDs etc.
 
 **Build a new Tool Class**
 
-Start by creating your own Tool class, and extend from the CMS Tool class. 
+Start by creating your own class that extends the CMS Tool class. This will create a new Tool in the Admin -> Settings section of the CMS.
 
 	public class DemoTool extends Tool {
 
-       @Override
-	public void initialize(Logger logger) throws Exception {
+	private static Logger LOGGER = LoggerFactory.getLogger(DemoTool.class);
 
+    private String exampleField;
+	
 	}
 
-**Modify your settings.properties file**
-
-Add the following, with your own GroupID and Class name, to your settings.properties file found at
-`src/main/resources/settings.properties`.
-
-    dari/mainApplicationClass=com.psddev.GROUPID.YOURTOOLCLASS
-
-This will add a new Tool in Admin -> Settings:
 
 ![Demo Tool ](http://docs.brightspot.s3.amazonaws.com/demo-tool.png)
 
-**Build your Area / Widget / Tool**
-
-While several new tools can be added, with each one extending from the Tool class, new tools that will add widgets or areas MUST all be contained with the one class, extending from Tool.
 
 **Adding a new Main Tab (Area)**
 
@@ -42,7 +32,7 @@ While several new tools can be added, with each one extending from the Tool clas
 
 	    @Override
 	    public void initialize(Logger logger) throws Exception {
-	        Area testArea = createArea("Test Area", "demo.Area", null, "/tool/index.jsp");
+	        Area testArea = createArea("Test Area", "demo.Area", null, "");
 	        introducePlugin(testArea);
 	        
 	        logger.info("Initialized the areas");
@@ -62,7 +52,7 @@ While several new tools can be added, with each one extending from the Tool clas
 
     		for (Area area : findPlugins(Area.class)) {
     			if ("admin".equals(area.getInternalName()) && (area.getTool() instanceof CmsTool)) {
-    			introducePlugin(createArea("TestArea", "testarea.main", area, "/admin/testarea.jsp"));
+    			introducePlugin(createArea("TestArea", "testarea.main", area, ""));
 
     			}
 
@@ -72,9 +62,43 @@ While several new tools can be added, with each one extending from the Tool clas
 
     }
 
+
+Note, when adding a widget, it must be done within the mainApplicationClass. This is defined in either a `settings.properties` file (src/main/resources/settings.properties), or your web.xml (WEB-INF/web.xml)
+
+**web.xml**
+
+	<env-entry>
+     <env-entry-name>dari/mainApplicationClass</env-entry-name>
+     <env-entry-type>java.lang.String</env-entry-type>
+     <env-entry-value>com.package.tool.Name</env-entry-value>
+    </env-entry>
+    
+**settings.properties**
+
+	dari/mainApplicationClass=com.package.tool.DemoTool
+	
+
+**Adding a widget to the Dashboard**
+
+    JspWidget socialWidget = createWidget(JspWidget.class, "Social Widget", "socialWidget", null);
+        socialWidget.setJsp("/dashboardWidgets/socialWidget.jsp");
+        socialWidget.addPosition(CmsTool.DASHBOARD_WIDGET_POSITION, 1.0, 4.0);
+        introducePlugin(socialWidget);
+        
+Within the Admin > Settings section, on the left hand side you can see your newly created plugin:
+
+<img src="http://docs.brightspot.s3.amazonaws.com/dashboard_widget_control.png"/>
+
+An example jsp structure for the widgets:
+
+	<div class="widget">
+	<h1>Title of Widget</h1>
+ 	    THIS IS CONTENT
+	</div>
+
 **Adding a widget to content publication page**
 
-Note, when adding a widget, it must be done within the mainApplicationClass.
+Each widget will have a `setJsp` which points to the jsp being used to render.
 
     JspWidget example = createWidget(JspWidget.class, "Example", "example", null);
 	example.setJsp("/WEB-INF/widget/example.jsp");
@@ -105,6 +129,36 @@ See the index.jsp used for the CMS application for an example.
 
 When building a complete page within the CMS, for your new tool, include the CMS header and footer with `wp.writeHeader();` and `wp.writeFooter();`
 
+    // Imports
+
+    <%
+    ToolPageContext wp=new ToolPageContext(pageContext);
+    wp.writeHeader();
+    %>
+
+    // Presentation
+    <div class="withLeftNav">
+        <div class="leftNav">
+
+            <div class="widget">
+              <h1>Left Sidebar</h1>
+              <ul class="links">
+                // Menu Content
+              </ul>
+            </div>
+        </div>
+            <div class="main">
+
+                <div class="widget">
+                  // Page Content
+                </div>
+
+            </div>
+    </div>
+
+    <% wp.writeFooter(); %>
+
+
 Note: A Widget will only appear within the CMS if it is actively displaying text in one form or another. If your widget is not appearing, test by printing out text through your .jsp.
 
 **Add URL**
@@ -115,4 +169,6 @@ Add designated URL. Within your new Tool, found in Admin -> Settings define your
 
 **Init**
 
-Run a `_debug/init` to initialize the new application tool, start and stop Tomcat.
+Run a `_debug/init` to initialize the new application tool, stop and start Tomcat.
+
+Note, you can add as many extra tools as you wish from the same initialize function.

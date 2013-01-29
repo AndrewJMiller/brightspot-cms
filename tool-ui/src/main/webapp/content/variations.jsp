@@ -11,6 +11,10 @@ java.util.UUID
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requireUser()) {
+    return;
+}
+
 UUID variationId = wp.uuidParam("variationId");
 
 // --- Presentation ---

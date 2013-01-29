@@ -4,90 +4,176 @@ title: Annotations
 id: annotations
 ---
 
+## Annotations
 
-## Tool UI
+Annotations provide information on how a particular field or model class
+should behave. The most commonly used annotations are `@Indexed` and
+`@Embedded`.
 
-The @ToolUi Library gives you more options for controlling the UI display in BrightSpot. It must be imported from:
+### Field Annotations
 
- `import com.psddev.cms.db.ToolUi;`
+`@InternalNamePrefix(String)`
 
-**@ToolUi.Note**
+> Specifies the prefix for the internal names of all fields in the target type.
 
-To provide the user with an annotation for a field simply use `@ToolUi.Note`. Within the UI it will appear above the specified field.
+`@CollectionMaximum(int)`
 
-<img class="smaller" src="http://docs.brightspot.s3.amazonaws.com/annotate.png">
+> Specifies the maximum number of items in the target field.
 
-    @ToolUi.Note("Leave blank to use the name.")
-    private String title;
+`@CollectionMinimum(int)`
 
-You can also add the `@ToolUi.Note` annotation to a class, to provide a Note for that object type within the CMS.
+> Specifies the minimum number of items in the target field.
 
-    @ToolUi.Note("This is an instructional note for the Content object.")
-    public class Article extends Content {
+`@DisplayName(String)`
 
-**@ToolUi.Heading**
+> Specifies the target field's display name.
 
-This annotation provides a horizontal rule within the Content Object, allowing new sections to be created with headings.
+`@Embedded`
 
-    @ToolUi.Heading("This is a section heading")
-    private ReferentialText body;
+> Specifies whether the target field value is embedded. This can also be applied at a class level.
+
+`@Ignored`
+
+> Specifies whether the target field is ignored.
+
+`@Indexed`
+
+> Specifies whether the target field value is indexed.
+
+`@Indexed(Unique=true)`
+
+> Specifies whether the target field value is indexed, and whether it should be unique.
+
+`@InternalName(String)`
+
+> Specifies the target field's internal name.
+
+`@Maximum(double)`
+
+> Specifies either the maximum numeric value or string length of the target field. Our example uses a 5 Star review option.
+
+`@Minimum(double)`
+
+> Specifies either the minimum numeric value or string length of the target field. The user can input 0 out of 5 for the review.
+
+`@Step(double)`
+
+> Specifies the margin between entries in the target field, in the example below every 0.5 is allowed. 0.5, 1.0, 1.5 etc.
+
+`@Regex(String)`
+
+> Specifies the regular expression pattern that the target field value must match.
+
+`@Required`
+
+> Specifies whether the target field value is required.
+	
+`@FieldTypes(Class<Recordable>[])`
+
+> Specifies the valid types for the target field value.
+
+`@FieldUnique`
+
+> Deprecated. Use `@Indexed(Unique=true)` instead.
+
+`@Values`
+
+> Specifies the valid values for the target field value.
+
+### Class Annotations
+
+`@Abstract`
+
+> Specifies whether the target type is abstract and can't be used to create a concrete instance.
+
+`@DisplayName(String)`
+
+> Specifies the target type's display name.
+
+`@Embedded`
+
+> Specifies whether the target type data is always embedded within another type data.
+
+`@InternalName(String)`
+
+> Specifies the target type's internal name.
+
+`@Recordable.LabelFields(String[])`
+
+> Specifies the field names that are used to retrieve the labels of the objects represented by the target type.
+
+`@Recordable.PreviewField`
+
+> Specifies the field name used to retrieve the previews of the objects represented by the target type.
 
 
-**@ToolUi.Hidden** 
-
-By using  `@ToolUi.Hidden` a target field can be hidden from the UI. Below we have hidden the `oldContent` 
-
-    public class Article extends Content {
-        
-        @ToolUi.Hidden
-        private String oldContent;
+### Tool UI Annotations
 
 
-**@ToolUi.OnlyPathed**
+The @ToolUi Library  `import com.psddev.cms.db.ToolUi;` gives you more options for controlling the UI display in Brightspot using annotations.
 
-If you want the target field to only contain objects with a path `@ToolUi.OnlyPathed` can be used.
+`@ToolUi.Note("String")`
 
-**@ToolUi.ReadOnly**
+> To provide the user with an instruction or note for a field in the CMS, simply use `@ToolUi.Note`. Within the UI it will appear above the specified field. You can also add the annotation to a class, to provide a Note for that object type within the CMS.
 
-Specifies that the target field is read-only.
+`@ToolUi.NoteHtml("<h1>String</h1>")`
 
+> Specifies the note, in raw HTML, displayed along with the target in the UI.
 
-**@ToolUi.Referenceable**
+`@ToolUi.Heading("String")`
 
-Adding `@ToolUi.Referenceable` specifies whether the instance of the target type can be referenced (added) by a referential text object (rich text editor).
+> Provides a horizontal rule within the Content Object, allowing new sections to be created with headings.
 
-**@ToolUi.CompatibleTypes** 
+`@ToolUi.Hidden`
 
-`@ToolUi.CompatibleTypes` Specifies an array of compatible types that the target type may switch to.
+> A target field can be hidden from the UI.
 
-Within the CMS, the UI updates to show a drop down of available content types.
+`@ToolUi.OnlyPathed`
 
-**@ToolUi.FieldSuggestedMaximum**
+> If you want the target field to only contain objects with a path.
 
-This annotation is used to indicate a suggested upper limit on the length of the field.
+`@ToolUi.ReadOnly`
 
-    @ToolUi.FieldSuggestedMaximum(50)
-    private String title;
+> Specifies that the target field is read-only.
 
-The value passed to the annotation is the limiting value.  When a user is modifying a field annotated with `@ToolUi.FieldSuggestedMaximum`, an indicator will appear when the input size has exceeded the specified limit.
+`@ToolUi.Placeholder("String")`
 
-![Screenshot of text field shorter than suggested maximum](http://docs.brightspot.s3.amazonaws.com/cms_1.5.0_soft_validation_below_maximum.png)
+> Specifies the target field's placeholder text.
 
-Similarly, the indicator will disappear as the user removes content from the input field, dropping it below the specified limit.
+`@ToolUi.FieldDisplayType`
 
-![Screenshot of text field longer than suggested maximum](http://docs.brightspot.s3.amazonaws.com/cms_1.5.0_soft_validation_above_maximum.png)
+> Specifies the internal type used to render the target field.
 
-**@ToolUi.FieldSuggestedMinimum**
+`@ToolUi.Referenceable`
 
-This annotation is used to indicate a suggested lower limit on the length of the field.
+> Specifies whether the instance of the target type can be referenced (added) by a referential text object (rich text editor). For example, an Image object that you want to be available as an Enhancement must have this annotation.
 
-    @ToolUi.FieldSuggestedMinimum(3)
-    private String title;
+`@ToolUi.CompatibleTypes`
 
-The value passed to the annotation is the limiting value.  When a user is modifying a field annotated with `@ToolUi.FieldSuggestedMinimum`, and indicator will appear whtn the input size falls below the specified limit.
+> Specifies an array of compatible types that the target type may switch to.
 
-![Screenshot of text field shorter than suggested minimum](http://docs.brightspot.s3.amazonaws.com/cms_1.5.0_soft_validation_below_minimum.png)
+`@ToolUi.FieldSuggestedMaximum(int)`
 
-Similarly, the indicator will disappear when the field length exceeds the specified limit.  
+> This annotation is used to indicate a suggested upper limit on the length of the field.
+The value passed to the annotation is the limiting value.  When a user is modifying a field annotated, an indicator will appear when the input size has exceeded the specified limit.
 
-![Screenshot of text field shorter than suggested minimum](http://docs.brightspot.s3.amazonaws.com/cms_1.5.0_soft_validation_above_minimum.png)
+`@ToolUi.FieldSuggestedMinimum(int)`
+
+> This annotation is used to indicate a suggested lower limit on the length of the field.
+The value passed to the annotation is the limiting value.  When a user is modifying a field annotated, an indicator will appear when the input size falls below the specified limit. 
+
+`@ToolUi.FieldSorted`
+
+> Specifies whether the values in the target field should be sorted before being saved.
+
+`@ToolUi.InputProcessorPath`
+
+> Specifies the path to the processor used to render and update the target field.
+
+`@ToolUi.InputSearcherPath`
+
+> Specifies the path to the searcher used to find a value for the target field.
+
+`@ToolUi.RichText`
+
+> Specifies whether the target field should offer rich-text editing options. This allows String fields to contain Rich Text Controls.
