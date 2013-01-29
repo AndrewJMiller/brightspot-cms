@@ -3,6 +3,7 @@
 com.psddev.cms.db.ReferentialTextMarker,
 com.psddev.cms.db.StandardImageSize,
 com.psddev.cms.tool.Area,
+com.psddev.cms.tool.Tool,
 com.psddev.cms.tool.ToolPageContext,
 com.psddev.cms.tool.Plugin,
 com.psddev.cms.tool.Widget,
@@ -19,6 +20,10 @@ java.util.List
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requirePermission("area/admin/adminSettings")) {
+    return;
+}
+
 Object selected = Query.findById(Object.class, wp.uuidParam("id"));
 if (selected == null) {
     if (wp.uuidParam("typeId") != null) {
@@ -84,16 +89,14 @@ List<StandardImageSize> standardImageSizes = Query.from(StandardImageSize.class)
                 <% } %>
             </ul>
 
-            <% for (Class<? extends Plugin> pluginClass : Arrays.asList(Area.class, Widget.class)) { %>
-                <h2>Tool <%= wp.objectLabel(wp.getDatabase().getEnvironment().getTypeByClass(pluginClass)) %>s</h2>
-                <ul class="links">
-                    <% for (Plugin plugin : wp.getTool().findPlugins(pluginClass)) { %>
-                        <li<%= plugin.equals(selected) ? " class=\"selected\"" : "" %>>
-                            <a href="<%= wp.objectUrl(null, plugin) %>"><%= wp.objectLabel(plugin) %></a>
-                        </li>
-                    <% } %>
-                </ul>
-            <% } %>
+            <h2>Plugins</h2>
+            <ul class="links">
+                <% for (Plugin plugin : Tool.Static.getPlugins()) { %>
+                    <li<%= plugin.equals(selected) ? " class=\"selected\"" : "" %>>
+                        <a href="<%= wp.objectUrl(null, plugin) %>"><%= wp.objectLabel(plugin) %></a>
+                    </li>
+                <% } %>
+            </ul>
         </div>
 
     </div>

@@ -1,59 +1,64 @@
-if (typeof jQuery !== 'undefined') (function($) {
+/** Inputs that can be repeated. */
+(function($, win, undef) {
 
-// Inputs that can be repeated.
-$.plugin('repeatable', {
+var $win = $(win);
 
-'init': function(options) {
-
-    options = $.extend(true, {
+$.plugin2('repeatable', {
+    '_defaultOptions': {
         'addButtonText': 'Add',
         'removeButtonText': 'Remove',
         'restoreButtonText': 'Restore',
-        'sortableOptions': { 'delay': 300 }
-    }, options);
-
-    // Helper for creating extra stuff on an item.
-    var createExtra = function() {
-
-        var $item = $(this);
-
-        var type = $item.attr('data-type');
-        if (type) {
-            var label = $item.attr('data-label');
-            var $labelHtml = $item.find(" > .label");
-            $labelHtml.removeClass('label');
-            $item.addClass('collapsed');
-            var $label = $('<div/>', {
-                'class': 'label',
-                'text': type + (label ? ': ' + label : ''),
-                'click': function() {
-                    $item.toggleClass('collapsed');
-                }
-            });
-            if($labelHtml.size() !== 0) {
-                $label.append($labelHtml);
-                $label.find(':input').click(function(e) {
-                    e.stopPropagation();
-                });
-            }
-            $item.prepend($label);
+        'sortableOptions': {
+            'delay': 300
         }
+    },
 
-        $item.find(':input[name$=.toggle]').hide();
-        $item.append($('<span/>', {
-            'class': 'removeButton',
-            'text': options.removeButtonText
-        }));
-    };
+    '_create': function(container) {
+        var $container = $(container),
+                options = this.option();
 
-    return this.liveInit(function() {
-        var $container = $(this);
+        // Helper for creating extra stuff on an item.
+        var createExtra = function() {
+
+            var $item = $(this);
+
+            var type = $item.attr('data-type');
+            if (type) {
+                var label = $item.attr('data-label');
+                var $labelHtml = $item.find(" > .label");
+                $labelHtml.removeClass('label');
+                if ($item.find('.error.message').length === 0) {
+                    $item.addClass('collapsed');
+                }
+                var $label = $('<div/>', {
+                    'class': 'label',
+                    'text': type + (label ? ': ' + label : ''),
+                    'click': function() {
+                        $item.toggleClass('collapsed');
+                        $item.resize();
+                    }
+                });
+                if ($labelHtml.size() !== 0) {
+                    $label.append($labelHtml);
+                    $label.find(':input').click(function(e) {
+                        e.stopPropagation();
+                    });
+                }
+                $item.prepend($label);
+            }
+
+            $item.find(':input[name$=".toggle"]').hide();
+            $item.append($('<span/>', {
+                'class': 'removeButton',
+                'text': options.removeButtonText
+            }));
+        };
 
         // List of inputs is contained in ul or ol (latter is sortable).
         var $list = $container.find('> ul:first');
-        if ($list.length == 0) {
+        if ($list.length === 0) {
             $list = $container.find('> ol:first');
-            if ($list.length == 0) {
+            if ($list.length === 0) {
                 return;
             } else {
                 $list.sortable(options.sortableOptions);
@@ -70,7 +75,7 @@ $.plugin('repeatable', {
         var $singleInput;
         if (!options.addButtonText && $templates.length == 1) {
             var $inputs = $templates.find(':input');
-            var $toggle = $templates.find(':input[name$=.toggle]');
+            var $toggle = $templates.find(':input[name$=".toggle"]');
             $inputs = $inputs.not($toggle);
             if ($inputs.length == 1) {
                 $singleInput = $inputs.clone();
@@ -106,7 +111,7 @@ $.plugin('repeatable', {
 
                     var $addedItem = $template.clone();
                     $addedItem.removeClass('template');
-                    $addedItem.find(':input[name$=.toggle]').attr('checked', 'checked');
+                    $addedItem.find(':input[name$=".toggle"]').attr('checked', 'checked');
 
                     var callback = function() {
 
@@ -116,7 +121,7 @@ $.plugin('repeatable', {
 
                         // Copy value in single input to the newly added item.
                         if ($singleInput) {
-                            $addedItem.find(':input:not([name$=.toggle])').val($singleInput.val());
+                            $addedItem.find(':input:not([name$=".toggle"])').val($singleInput.val());
                             $singleInput.val('');
                         }
 
@@ -130,11 +135,13 @@ $.plugin('repeatable', {
                         });
 
                         $addedItem.change();
+                        $addedItem.trigger('create');
+                        $win.resize();
                     };
 
                     // Load an external form if the template consists of a single link without any other inputs.
                     var $templateLink;
-                    if ($addedItem.find(':input').length == 0 && ($templateLink = $addedItem.find('a')).length > 0) {
+                    if ($addedItem.find(':input').length === 0 && ($templateLink = $addedItem.find('a')).length > 0) {
                         $.ajax({
                             'cache': false,
                             'url': $templateLink.attr('href'),
@@ -147,7 +154,7 @@ $.plugin('repeatable', {
                         callback();
                     }
 
-                    $(window).resize();
+                    return false;
                 }
             }));
         });
@@ -156,7 +163,7 @@ $.plugin('repeatable', {
         // - Add toBeRemoved class on the item.
         // - Disable all inputs.
         // - Change remove link text.
-        $list.find('> li > .removeButton').live('click', function() {
+        $list.delegate('> li > .removeButton', 'click', function() {
 
             var $removeButton = $(this);
             var $item = $removeButton.closest('li');
@@ -179,9 +186,7 @@ $.plugin('repeatable', {
 
             $item.change();
         });
-    });
-}
-
+    }
 });
 
-})(jQuery);
+}(jQuery, window));

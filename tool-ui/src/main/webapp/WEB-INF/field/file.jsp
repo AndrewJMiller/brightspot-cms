@@ -1,6 +1,7 @@
 <%@ page import="
 
 com.psddev.cms.db.ImageCrop,
+com.psddev.cms.db.ImageTextOverlay,
 com.psddev.cms.db.StandardImageSize,
 com.psddev.cms.tool.ToolPageContext,
 
@@ -12,6 +13,8 @@ com.psddev.dari.util.MultipartRequest,
 com.psddev.dari.util.ImageMetadataMap,
 com.psddev.dari.util.IoUtils,
 com.psddev.dari.util.ObjectUtils,
+com.psddev.dari.util.Settings,
+com.psddev.dari.util.SparseSet,
 com.psddev.dari.util.StorageItem,
 com.psddev.dari.util.StorageItem.Static,
 com.psddev.dari.util.StringUtils,
@@ -26,7 +29,10 @@ java.util.HashMap,
 java.util.Iterator,
 java.util.LinkedHashMap,
 java.util.List,
+java.util.Locale,
 java.util.Map,
+java.util.Set,
+java.util.TreeMap,
 java.util.UUID,
 
 org.apache.commons.fileupload.FileItem,
@@ -58,6 +64,15 @@ String fileName = inputName + ".file";
 String urlName = inputName + ".url";
 String cropsName = inputName + ".crops.";
 
+String brightnessName = inputName + ".brightness";
+String contrastName = inputName + ".contrast";
+String flipHName = inputName + ".flipH";
+String flipVName = inputName + ".flipV";
+String grayscaleName = inputName + ".grayscale";
+String invertName = inputName + ".invert";
+String rotateName = inputName + ".rotate";
+String sepiaName = inputName + ".sepia";
+
 String metadataFieldName = fieldName + ".metadata";
 String widthFieldName = fieldName + ".width";
 String heightFieldName = fieldName + ".height";
@@ -72,6 +87,22 @@ if (fieldValueMetadata == null) {
     fieldValueMetadata = new LinkedHashMap<String, Object>();
 }
 
+Map<String, Object> edits = (Map<String, Object>) fieldValueMetadata.get("cms.edits");
+
+if (edits == null) {
+    edits = new HashMap<String, Object>();
+    fieldValueMetadata.put("cms.edits", edits);
+}
+
+double brightness = ObjectUtils.to(double.class, edits.get("brightness"));
+double contrast = ObjectUtils.to(double.class, edits.get("contrast"));
+boolean flipH = ObjectUtils.to(boolean.class, edits.get("flipH"));
+boolean flipV = ObjectUtils.to(boolean.class, edits.get("flipV"));
+boolean grayscale = ObjectUtils.to(boolean.class, edits.get("grayscale"));
+boolean invert = ObjectUtils.to(boolean.class, edits.get("invert"));
+int rotate = ObjectUtils.to(int.class, edits.get("rotate"));
+boolean sepia = ObjectUtils.to(boolean.class, edits.get("sepia"));
+
 Map<String, ImageCrop> crops = ObjectUtils.to(new TypeReference<Map<String, ImageCrop>>() { }, fieldValueMetadata.get("cms.crops"));
 if (crops == null) {
     // for backward compatibility
@@ -80,6 +111,8 @@ if (crops == null) {
 if (crops == null) {
     crops = new HashMap<String, ImageCrop>();
 }
+
+crops = new TreeMap<String, ImageCrop>(crops);
 
 Map<String, StandardImageSize> sizes = new HashMap<String, StandardImageSize>();
 for (StandardImageSize size : StandardImageSize.findAll()) {
@@ -94,10 +127,52 @@ if ((Boolean) request.getAttribute("isFormPost")) {
     String action = wp.param(actionName);
     StorageItem newItem = null;
 
+    brightness = wp.param(double.class, brightnessName);
+    contrast = wp.param(double.class, contrastName);
+    flipH = wp.param(boolean.class, flipHName);
+    flipV = wp.param(boolean.class, flipVName);
+    grayscale = wp.param(boolean.class, grayscaleName);
+    invert = wp.param(boolean.class, invertName);
+    rotate = wp.param(int.class, rotateName);
+    sepia = wp.param(boolean.class, sepiaName);
+
+    edits = new HashMap<String, Object>();
+
+    if (brightness != 0.0) {
+        edits.put("brightness", brightness);
+    }
+    if (contrast != 0.0) {
+        edits.put("contrast", contrast);
+    }
+    if (flipH) {
+        edits.put("flipH", flipH);
+    }
+    if (flipV) {
+        edits.put("flipV", flipV);
+    }
+    if (invert) {
+        edits.put("invert", invert);
+    }
+    if (rotate != 0) {
+        edits.put("rotate", rotate);
+    }
+    if (grayscale) {
+        edits.put("grayscale", grayscale);
+    }
+    if (sepia) {
+        edits.put("sepia", sepia);
+    }
+
+    fieldValueMetadata.put("cms.edits", edits);
+
     if ("keep".equals(action)) {
-        newItem = StorageItem.Static.createIn(wp.param(storageName));
-        newItem.setPath(wp.param(pathName));
-        newItem.setContentType(wp.param(contentTypeName));
+        if (fieldValue != null) {
+            newItem = fieldValue;
+        } else {
+            newItem = StorageItem.Static.createIn(wp.param(storageName));
+            newItem.setPath(wp.param(pathName));
+            newItem.setContentType(wp.param(contentTypeName));
+        }
 
     } else if ("newUpload".equals(action) || "newUrl".equals(action)) {
 
@@ -108,16 +183,93 @@ if ((Boolean) request.getAttribute("isFormPost")) {
                 MultipartRequest mpRequest = (MultipartRequest) request;
                 FileItem file = mpRequest.getFileItem(fileName);
 
+                // Checks to make sure the file's content type is valid
+                String groupsPattern = Settings.get(String.class, "cms/tool/fileContentTypeGroups");
+                Set<String> contentTypeGroups = new SparseSet(ObjectUtils.isBlank(groupsPattern) ? "+/" : groupsPattern);
+                if (!contentTypeGroups.contains(file.getContentType())) {
+                    state.addError(field, String.format(
+                            "Invalid content type [%s]. Must match the pattern [%s].",
+                            file.getContentType(), contentTypeGroups));
+                    return;
+                }
+
+                // Disallow HTML disguising as other content types per:
+                // http://www.adambarth.com/papers/2009/barth-caballero-song.pdf
+                if (!contentTypeGroups.contains("text/html")) {
+                    InputStream input = file.getInputStream();
+
+                    try {
+                        byte[] buffer = new byte[1024];
+                        String data = new String(buffer, 0, input.read(buffer)).toLowerCase(Locale.ENGLISH);
+                        String ptr = data.trim();
+
+                        if (ptr.startsWith("<!") ||
+                                ptr.startsWith("<?") ||
+                                data.startsWith("<html") ||
+                                data.startsWith("<script") ||
+                                data.startsWith("<title") ||
+                                data.startsWith("<body") ||
+                                data.startsWith("<head") ||
+                                data.startsWith("<plaintext") ||
+                                data.startsWith("<table") ||
+                                data.startsWith("<img") ||
+                                data.startsWith("<pre") ||
+                                data.startsWith("text/html") ||
+                                data.startsWith("<a") ||
+                                ptr.startsWith("<frameset") ||
+                                ptr.startsWith("<iframe") ||
+                                ptr.startsWith("<link") ||
+                                ptr.startsWith("<base") ||
+                                ptr.startsWith("<style") ||
+                                ptr.startsWith("<div") ||
+                                ptr.startsWith("<p") ||
+                                ptr.startsWith("<font") ||
+                                ptr.startsWith("<applet") ||
+                                ptr.startsWith("<meta") ||
+                                ptr.startsWith("<center") ||
+                                ptr.startsWith("<form") ||
+                                ptr.startsWith("<isindex") ||
+                                ptr.startsWith("<h1") ||
+                                ptr.startsWith("<h2") ||
+                                ptr.startsWith("<h3") ||
+                                ptr.startsWith("<h4") ||
+                                ptr.startsWith("<h5") ||
+                                ptr.startsWith("<h6") ||
+                                ptr.startsWith("<b") ||
+                                ptr.startsWith("<br")) {
+                            state.addError(field, String.format(
+                                    "Can't upload [%s] file disguising as HTML!",
+                                    file.getContentType()));
+                            return;
+                        }
+
+                    } finally {
+                        input.close();
+                    }
+                }
+
                 if (file.getSize() > 0) {
                     String idString = UUID.randomUUID().toString().replace("-", "");
                     StringBuilder pathBuilder = new StringBuilder();
+                    String label = state.getLabel();
+
+                    if (ObjectUtils.isBlank(label)) {
+                        label = file.getName();
+                    }
+
+                    label = StringUtils.toNormalized(label);
+
+                    if (ObjectUtils.isBlank(label)) {
+                        label = UUID.randomUUID().toString().replace("-", "");
+                    }
+
                     pathBuilder.append(idString.substring(0, 2));
                     pathBuilder.append('/');
                     pathBuilder.append(idString.substring(2, 4));
                     pathBuilder.append('/');
                     pathBuilder.append(idString.substring(4));
                     pathBuilder.append('/');
-                    pathBuilder.append(file.getName());
+                    pathBuilder.append(label);
 
                     newItem = StorageItem.Static.create();
                     newItem.setPath(pathBuilder.toString());
@@ -162,7 +314,7 @@ if ((Boolean) request.getAttribute("isFormPost")) {
         }
     }
 
-    // Crops.
+    // Standard sizes.
     for (Iterator<Map.Entry<String, ImageCrop>> i = crops.entrySet().iterator(); i.hasNext(); ) {
         Map.Entry<String, ImageCrop> e = i.next();
         String cropId = e.getKey();
@@ -170,12 +322,29 @@ if ((Boolean) request.getAttribute("isFormPost")) {
         double y = wp.doubleParam(cropsName + cropId + ".y");
         double width = wp.doubleParam(cropsName + cropId + ".width");
         double height = wp.doubleParam(cropsName + cropId + ".height");
-        if (x != 0.0 || y != 0.0 || width != 0.0 || height != 0.0) {
+        String texts = wp.param(cropsName + cropId + ".texts");
+        String textSizes = wp.param(cropsName + cropId + ".textSizes");
+        String textXs = wp.param(cropsName + cropId + ".textXs");
+        String textYs = wp.param(cropsName + cropId + ".textYs");
+        String textWidths = wp.param(cropsName + cropId + ".textWidths");
+        if (x != 0.0 || y != 0.0 || width != 0.0 || height != 0.0 || !ObjectUtils.isBlank(texts)) {
             ImageCrop crop = e.getValue();
             crop.setX(x);
             crop.setY(y);
             crop.setWidth(width);
             crop.setHeight(height);
+            crop.setTexts(texts);
+            crop.setTextSizes(textSizes);
+            crop.setTextXs(textXs);
+            crop.setTextYs(textYs);
+            crop.setTextWidths(textWidths);
+
+            for (Iterator<ImageTextOverlay> j = crop.getTextOverlays().iterator(); j.hasNext(); ) {
+                if (ObjectUtils.isBlank(j.next().getText())) {
+                    j.remove();
+                }
+            }
+
         } else {
             i.remove();
         }
@@ -240,11 +409,56 @@ String existingClass = wp.createId();
 
             <% if (contentType != null && contentType.startsWith("image/")) { %>
                 <div class="imageEditor">
-                    <ul class="toolbar piped">
-                        <li><a class="icon-table" href="<%= wp.url("/content/imageMetadata.jsp", "id", id, "field", fieldName) %>" target="contentImageMetadata">Metadata</a></li>
+
+                    <div class="imageEditor-aside">
+                        <div class="imageEditor-tools">
+                            <h2>Tools</h2>
+                            <ul>
+                            </ul>
+                        </div>
+
+                        <div class="imageEditor-edit">
+                            <h2>Adjustments</h2>
+                            <table><tbody>
+                                <tr>
+                                    <th>Brightness</th>
+                                    <td><input type="range" name="<%= brightnessName %>" value="<%= brightness %>" min="-1.0" max="1.0" step="0.01"></td>
+                                </tr>
+                                <tr>
+                                    <th>Contrast</th>
+                                    <td><input type="range" name="<%= contrastName %>" value="<%= contrast %>" min="-1.0" max="1.0" step="0.01"></td>
+                                </tr>
+                                <tr>
+                                    <th>Flip H</th>
+                                    <td><input type="checkbox" name="<%= flipHName %>" value="true"<%= flipH ? " checked" : "" %>></td>
+                                </tr>
+                                <tr>
+                                    <th>Flip V</th>
+                                    <td><input type="checkbox" name="<%= flipVName %>" value="true"<%= flipV ? " checked" : "" %>></td>
+                                </tr>
+                                <tr>
+                                    <th>Invert</th>
+                                    <td><input type="checkbox" name="<%= invertName %>" value="true"<%= invert ? " checked" : "" %>></td>
+                                </tr>
+                                <tr>
+                                    <th>Grayscale</th>
+                                    <td><input type="checkbox" name="<%= grayscaleName %>" value="true"<%= grayscale ? " checked" : "" %>></td>
+                                </tr>
+                                <tr>
+                                    <th>Rotate</th>
+                                    <td><input type="range" name="<%= rotateName %>" value="<%= rotate %>" min="-90" max="90" step="90"></td>
+                                </tr>
+                                <tr>
+                                    <th>Sepia</th>
+                                    <td><input type="checkbox" name="<%= sepiaName %>" value="true"<%= sepia ? " checked" : "" %>></td>
+                                </tr>
+                            </tbody></table>
+                        </div>
+
                         <% if (!crops.isEmpty()) { %>
-                            <li>Crops:
-                                <table class="crops"><tbody>
+                            <div class="imageEditor-sizes">
+                                <h2>Standard Sizes</h2>
+                                <table><tbody>
                                     <%
                                     for (Map.Entry<String, ImageCrop> e : crops.entrySet()) {
                                         String cropId = e.getKey();
@@ -265,14 +479,24 @@ String existingClass = wp.createId();
                                             <td><input name="<%= wp.h(cropsName + cropId + ".y") %>" type="text" value="<%= crop.getY() %>"></td>
                                             <td><input name="<%= wp.h(cropsName + cropId + ".width") %>" type="text" value="<%= crop.getWidth() %>"></td>
                                             <td><input name="<%= wp.h(cropsName + cropId + ".height") %>" type="text" value="<%= crop.getHeight() %>"></td>
+                                            <td><input name="<%= wp.h(cropsName + cropId + ".texts") %>" type="text" value="<%= wp.h(crop.getTexts()) %>"></td>
+                                            <td><input name="<%= wp.h(cropsName + cropId + ".textSizes") %>" type="text" value="<%= wp.h(crop.getTextSizes()) %>"></td>
+                                            <td><input name="<%= wp.h(cropsName + cropId + ".textXs") %>" type="text" value="<%= crop.getTextXs() %>"></td>
+                                            <td><input name="<%= wp.h(cropsName + cropId + ".textYs") %>" type="text" value="<%= crop.getTextYs() %>"></td>
+                                            <td><input name="<%= wp.h(cropsName + cropId + ".textWidths") %>" type="text" value="<%= crop.getTextWidths() %>"></td>
                                         </tr>
                                     <% } %>
                                 </tbody></table>
-                            </li>
+                            </div>
                         <% } %>
-                    </ul>
-                    <img src="<%= wp.h(fieldValue.getUrl()) %>">
+                    </div>
+
+                    <div class="imageEditor-image">
+                        <img alt="" src="<%= wp.url("/misc/proxy.jsp", "url", fieldValue.getUrl()) %>">
+                    </div>
+
                 </div>
+
             <% } else if(fieldValue instanceof BrightcoveStorageItem) { %>
 
                 <% String playerKey = ((BrightcoveStorageItem) fieldValue).getPreviewPlayerKey(); %>

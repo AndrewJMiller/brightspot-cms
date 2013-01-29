@@ -14,6 +14,10 @@ java.util.Map
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requireUser()) {
+    return;
+}
+
 Object object = Query.findById(Object.class, wp.uuidParam("id"));
 
 Map<String, Map<String, Object>> metadata = null;
@@ -45,7 +49,7 @@ if (object != null) {
 <% } else { %>
     <% for (Map.Entry<String, Map<String, Object>> e1 : metadata.entrySet()) { %>
         <h2><%= wp.h(e1.getKey()) %></h1>
-        <table><tbody>
+        <table class="table-striped"><tbody>
             <% for (Map.Entry<String, Object> e2 : e1.getValue().entrySet()) { %>
                 <tr>
                     <th><%= wp.h(e2.getKey()) %></th>

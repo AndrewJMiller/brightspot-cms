@@ -5,7 +5,10 @@ import java.net.URI;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.UUID;
 
 import javax.servlet.jsp.JspException;
 import javax.servlet.jsp.JspWriter;
@@ -16,6 +19,8 @@ import javax.servlet.jsp.tagext.TagSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.psddev.cms.tool.CmsTool;
+import com.psddev.dari.db.Application;
 import com.psddev.dari.db.ObjectField;
 import com.psddev.dari.db.ObjectType;
 import com.psddev.dari.db.Recordable;
@@ -50,11 +55,14 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
                 || src instanceof URI
                 || src instanceof URL) {
 
-            tagBuilder.setItem(StorageItem.Static.createUrl(
-                    JspUtils.getEmbeddedAbsolutePath(
-                            wp.getServletContext(),
-                            wp.getRequest(),
-                            src.toString())));
+            String path = JspUtils.resolvePath(wp.getServletContext(), wp.getRequest(), src.toString());
+            StorageItem pathItem;
+            if (path.startsWith("/")) {
+                pathItem = StorageItem.Static.createUrl(JspUtils.getAbsoluteUrl(wp.getRequest(), path));
+            } else {
+                pathItem = StorageItem.Static.createUrl(path);
+            }
+            tagBuilder.setItem(pathItem);
 
         } else if (src instanceof StorageItem) {
             tagBuilder.setItem((StorageItem) src);
@@ -161,6 +169,10 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
         tagBuilder.setResizeOption(resizeOption);
     }
 
+    public void setTagName(String tagName) {
+        tagBuilder.setTagName(tagName);
+    }
+
     /**
      * Overrides the default attribute (src) used to place the image URL. This
      * is usually used in the conjunction with lazy loading scripts that copy
@@ -179,6 +191,10 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
         if (ObjectUtils.to(boolean.class, hideDimensions)) {
             tagBuilder.hideDimensions();
         }
+    }
+
+    public void setOverlay(Object overlay) {
+        tagBuilder.setOverlay(ObjectUtils.to(boolean.class, overlay));
     }
 
     // --- DynamicAttribute support ---
@@ -204,10 +220,14 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
         return SKIP_BODY;
     }
 
-    private static String convertAttributesToHtml(Map<String, String> attributes) {
+    private static String convertAttributesToHtml(String tagName, Map<String, String> attributes) {
         StringBuilder builder = new StringBuilder();
         if (!attributes.isEmpty()) {
-            builder.append("<img");
+            if (tagName == null) {
+                tagName = "img";
+            }
+            builder.append("<");
+            builder.append(tagName);
             for (Map.Entry<String, String> e : attributes.entrySet()) {
                 String key = e.getKey();
                 String value = e.getValue();
@@ -220,6 +240,11 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
                 }
             }
             builder.append(">");
+            if (!"img".equalsIgnoreCase(tagName)) {
+                builder.append("</");
+                builder.append(tagName);
+                builder.append(">");
+            }
         }
         return builder.toString();
     }
@@ -439,8 +464,10 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
         private CropOption cropOption;
         private ResizeOption resizeOption;
 
+        private String tagName;
         private String srcAttribute;
         private boolean hideDimensions;
+        private boolean overlay;
 
         private final Map<String, String> attributes = new LinkedHashMap<String, String>();
 
@@ -473,6 +500,7 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
             height = null;
             cropOption = null;
             resizeOption = null;
+            tagName = null;
             srcAttribute = null;
             hideDimensions = false;
             attributes.clear();
@@ -545,6 +573,11 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
             return this;
         }
 
+        public Builder setTagName(String tagName) {
+            this.tagName = tagName;
+            return this;
+        }
+
         /**
          * Overrides the default attribute (src) used to place the image URL. This
          * is usually used in the conjunction with lazy loading scripts that copy
@@ -563,6 +596,14 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
         public Builder hideDimensions() {
             this.hideDimensions = true;
             return this;
+        }
+
+        public boolean isOverlay() {
+            return overlay;
+        }
+
+        public void setOverlay(boolean overlay) {
+            this.overlay = overlay;
         }
 
         /**
@@ -612,7 +653,110 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
          * @return the HTML for an img tag constructed by this Builder.
          */
         public String toHtml() {
-            return convertAttributesToHtml(toAttributes());
+            String html = convertAttributesToHtml(tagName, toAttributes());
+
+            if (isOverlay()) {
+                StorageItem item = null;
+                Map<String, ImageCrop> crops = null;
+
+                if (this.state != null) {
+                    State objectState = this.state;
+                    String field = this.field;
+
+                    if (ObjectUtils.isBlank(field)) {
+                        field = findStorageItemField(objectState);
+                    }
+
+                    item = findStorageItem(objectState, field);
+
+                    if (item != null) {
+                        crops = findImageCrops(objectState, field);
+                    }
+
+                } else {
+                    item = this.item;
+
+                    if (item != null) {
+                        crops = findImageCrops(item);
+                    }
+                }
+
+                if (item != null && crops != null && standardImageSize != null) {
+                    ImageCrop crop = crops.get(standardImageSize.getId().toString());
+
+                    if (crop != null) {
+                        List<ImageTextOverlay> textOverlays = crop.getTextOverlays();
+                        boolean hasOverlays = false;
+
+                        for (ImageTextOverlay textOverlay : textOverlays) {
+                            if (!ObjectUtils.isBlank(textOverlay.getText())) {
+                                hasOverlays = true;
+                                break;
+                            }
+                        }
+
+                        if (hasOverlays) {
+                            StringBuilder overlay = new StringBuilder();
+                            CmsTool cms = Application.Static.getInstance(CmsTool.class);
+                            String defaultCss = cms.getDefaultTextOverlayCss();
+                            String id = "i" + UUID.randomUUID().toString().replace("-", "");
+
+                            overlay.append("<style type=\"text/css\">");
+
+                            if (!ObjectUtils.isBlank(defaultCss)) {
+                                overlay.append("#");
+                                overlay.append(id);
+                                overlay.append("{display:inline-block;overflow:hidden;position:relative;");
+                                overlay.append(defaultCss);
+                                overlay.append("}");
+                            }
+
+                            for (CmsTool.CssClassGroup group : cms.getTextCssClassGroups()) {
+                                String groupName = group.getInternalName();
+                                for (CmsTool.CssClass cssClass : group.getCssClasses()) {
+                                    overlay.append("#");
+                                    overlay.append(id);
+                                    overlay.append(" .cms-");
+                                    overlay.append(groupName);
+                                    overlay.append("-");
+                                    overlay.append(cssClass.getInternalName());
+                                    overlay.append("{");
+                                    overlay.append(cssClass.getCss());
+                                    overlay.append("}");
+                                }
+                            }
+
+                            overlay.append("</style>");
+
+                            overlay.append("<span id=\"");
+                            overlay.append(id);
+                            overlay.append("\">");
+                            overlay.append(html);
+
+                            for (ImageTextOverlay textOverlay : textOverlays) {
+                                String text = textOverlay.getText();
+
+                                overlay.append("<span style=\"left: ");
+                                overlay.append(textOverlay.getX() * 100);
+                                overlay.append("%; position: absolute; top: ");
+                                overlay.append(textOverlay.getY() * 100);
+                                overlay.append("%; font-size: ");
+                                overlay.append(textOverlay.getSize() * standardImageSize.getHeight());
+                                overlay.append("px; width: ");
+                                overlay.append(textOverlay.getWidth() != 0.0 ? textOverlay.getWidth() * 100 : 100.0);
+                                overlay.append("%;\">");
+                                overlay.append(text);
+                                overlay.append("</span>");
+                            }
+
+                            overlay.append("</span>");
+                            html = overlay.toString();
+                        }
+                    }
+                }
+            }
+
+            return html;
         }
 
         /**
@@ -736,6 +880,9 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
                     options.put(ImageEditor.RESIZE_OPTION, resizeOption.getImageEditorOption());
                 }
 
+                @SuppressWarnings("unchecked")
+                Map<String, Object> edits = (Map<String, Object>) item.getMetadata().get("cms.edits");
+
                 // Requires at least the width and height to perform a crop
                 if (cropWidth != null && cropHeight != null) {
                     item = ImageEditor.Static.crop(editor, item, options, cropX, cropY, cropWidth, cropHeight);
@@ -744,6 +891,16 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
                 // Requires only one of either the width or the height to perform a resize
                 if (width != null || height != null) {
                     item = ImageEditor.Static.resize(editor, item, options, width, height);
+                }
+
+                if (edits != null) {
+                    ImageEditor realEditor = editor;
+                    if (realEditor == null) {
+                        realEditor = ImageEditor.Static.getDefault();
+                    }
+                    for (Map.Entry<String, Object> entry : new TreeMap<String, Object>(edits).entrySet()) {
+                        item = realEditor.edit(item, entry.getKey(), null, entry.getValue());
+                    }
                 }
 
                 String url = item.getPublicUrl();
@@ -879,7 +1036,7 @@ public class ImageTag extends TagSupport implements DynamicAttributes {
             Map<String, String> attributes = getAttributes(wp,
                     object, field, editor, standardSize, width, height, cropOption, resizeOption, srcAttr, dynamicAttributes);
 
-            return convertAttributesToHtml(attributes);
+            return convertAttributesToHtml(null, attributes);
         }
 
         /**

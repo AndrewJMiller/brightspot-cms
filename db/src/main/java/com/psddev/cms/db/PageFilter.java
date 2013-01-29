@@ -1,43 +1,53 @@
 package com.psddev.cms.db;
 
-import com.psddev.cms.tool.ToolFilter;
+import com.psddev.cms.tool.AuthenticationFilter;
+import com.psddev.cms.tool.CmsTool;
+import com.psddev.cms.tool.RemoteWidgetFilter;
 
+import com.psddev.dari.db.Application;
 import com.psddev.dari.db.ApplicationFilter;
 import com.psddev.dari.db.Database;
-import com.psddev.dari.db.Query;
 import com.psddev.dari.db.ObjectType;
-import com.psddev.dari.db.ProfilingDatabase;
-import com.psddev.dari.db.Recordable;
+import com.psddev.dari.db.Query;
 import com.psddev.dari.db.Record;
+import com.psddev.dari.db.Recordable;
 import com.psddev.dari.db.State;
 import com.psddev.dari.util.AbstractFilter;
+import com.psddev.dari.util.CodeUtils;
+import com.psddev.dari.util.DebugFilter;
 import com.psddev.dari.util.HtmlFormatter;
+import com.psddev.dari.util.HtmlObject;
 import com.psddev.dari.util.HtmlWriter;
 import com.psddev.dari.util.JspUtils;
 import com.psddev.dari.util.ObjectUtils;
 import com.psddev.dari.util.PageContextFilter;
 import com.psddev.dari.util.Profiler;
-import com.psddev.dari.util.ProfilerFilter;
 import com.psddev.dari.util.PullThroughCache;
 import com.psddev.dari.util.Settings;
-import com.psddev.dari.util.StringUtils;
 import com.psddev.dari.util.StorageItem;
+import com.psddev.dari.util.StringUtils;
 import com.psddev.dari.util.TypeDefinition;
 
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.lang.reflect.Method;
 import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -54,6 +64,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class PageFilter extends AbstractFilter {
+
+    public static final String WIREFRAME_PARAMETER = "_wireframe";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PageFilter.class);
 
@@ -213,8 +225,12 @@ public class PageFilter extends AbstractFilter {
     public Iterable<Class<? extends Filter>> dependencies() {
         List<Class<? extends Filter>> dependencies = new ArrayList<Class<? extends Filter>>();
         dependencies.add(ApplicationFilter.class);
-        dependencies.add(com.psddev.cms.tool.ToolFilter.class);
+        dependencies.add(RemoteWidgetFilter.class);
+        dependencies.add(AuthenticationFilter.class);
         dependencies.add(com.psddev.cms.tool.ScheduleFilter.class);
+        dependencies.add(com.psddev.dari.util.FrameFilter.class);
+        dependencies.add(com.psddev.dari.util.RoutingFilter.class);
+        dependencies.add(FieldAccessFilter.class);
         return dependencies;
     }
 
@@ -227,54 +243,6 @@ public class PageFilter extends AbstractFilter {
             return true;
         }
     }
-    
-    @Override
-    protected void doDispatch(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain chain)
-            throws Exception {
-
-        Profiler profiler = Profiler.Static.getThreadProfiler();
-
-        if (profiler == null) {
-            super.doDispatch(request, response, chain);
-
-        } else {
-            ProfilingDatabase profiling = new ProfilingDatabase();
-            profiling.setDelegate(Database.Static.getDefault());
-
-            HtmlWriter resultWriter = ProfilerFilter.Static.getResultWriter(request, response);
-            resultWriter.putOverride(Recordable.class, RECORDABLE_FORMATTER);
-
-            try {
-                Database.Static.overrideDefault(profiling);
-                super.doDispatch(request, response, chain);
-
-            } finally {
-                Database.Static.restoreDefault();
-            }
-        }
-    }
-
-    private static final HtmlFormatter<Recordable> RECORDABLE_FORMATTER = new HtmlFormatter<Recordable>() {
-        @Override
-        public void format(HtmlWriter writer, Recordable recordable) throws IOException {
-
-            State recordableState = recordable.getState();
-            ObjectType type = recordableState.getType();
-            if (type != null) {
-                writer.string(type.getLabel());
-                writer.string(": ");
-            }
-
-            writer.start("a", "href", StringUtils.addQueryParameters("/_debug/query",
-                    "where", "id = " + recordableState.getId(),
-                    "event", "Run"), "target", "query");
-                writer.string(recordableState.getLabel());
-            writer.end();
-        }
-    };
 
     @Override
     protected void doError(
@@ -298,7 +266,7 @@ public class PageFilter extends AbstractFilter {
         request.removeAttribute(PROFILE_CHECKED_ATTRIBUTE);
         request.removeAttribute(SITE_CHECKED_ATTRIBUTE);
 
-        doPage(request, response, chain);
+        doRequest(request, response, chain);
     }
 
     @Override
@@ -308,156 +276,181 @@ public class PageFilter extends AbstractFilter {
             FilterChain chain)
             throws IOException, ServletException {
 
-        Profile profile = getProfile(request);
+        Profile profile = Static.getProfile(request);
         Variation.Static.applyAll(TypeDefinition.getInstance(Record.class).newInstance(), profile);
 
         if (redirectIfFixedPath(request, response)) {
             return;
         }
 
-        boolean isAuthenticated = ToolFilter.Static.isAuthenticated(request);
-
-        if (!isAuthenticated) {
-            VaryingDatabase varying = new VaryingDatabase();
-            varying.setDelegate(Database.Static.getDefault());
-            varying.setProfile(profile);
-            Database.Static.overrideDefault(varying);
-        }
+        VaryingDatabase varying = new VaryingDatabase();
+        varying.setDelegate(Database.Static.getDefault());
+        varying.setRequest(request);
+        varying.setProfile(profile);
+        Database.Static.overrideDefault(varying);
 
         try {
-            doPage(request, response, chain);
+            String servletPath = request.getServletPath();
+
+            // Serve a special robots.txt file for non-production.
+            if (servletPath.equals("/robots.txt") && !Settings.isProduction()) {
+                response.setContentType("text/plain");
+                PrintWriter writer = response.getWriter();
+                writer.println("User-agent: *");
+                writer.println("Disallow: /");
+                return;
+
+            // Render a single section.
+            } else if (servletPath.startsWith("/_render")) {
+                UUID sectionId = ObjectUtils.to(UUID.class, request.getParameter("_sectionId"));
+                Section section = Query.findById(Section.class, sectionId);
+                if (section != null) {
+                    writeSection(request, response, response.getWriter(), section);
+                }
+                return;
+
+            // Strip the special directory suffix.
+            } else if (servletPath.endsWith("/index")) {
+                JspUtils.redirectPermanently(request, response, servletPath.substring(0, servletPath.length() - 5));
+                return;
+            }
+
+            // Global prefix?
+            String prefix = Settings.get(String.class, "cms/db/directoryPrefix");
+            if (!ObjectUtils.isBlank(prefix)) {
+                Static.setPath(request, StringUtils.ensureEnd(prefix, "/") + servletPath);
+            }
+
+            Site site = Static.getSite(request);
+            if (redirectIfFixedPath(request, response)) {
+                return;
+            }
+
+            Object mainObject = Static.getMainObject(request);
+            if (redirectIfFixedPath(request, response)) {
+                return;
+            } else {
+                HttpServletRequest newRequest = (HttpServletRequest) request.getAttribute(NEW_REQUEST_ATTRIBUTE);
+                if (newRequest != null) {
+                    request = newRequest;
+                }
+            }
+
+            // Not handled by the CMS.
+            if (mainObject == null) {
+                chain.doFilter(request, response);
+                return;
+            }
+
+            // If mainObject has a redirect path AND a permalink and the
+            // current request is the redirect path, then redirect to the
+            // permalink.
+            String path = Static.getPath(request);
+            Directory.Path redirectPath = null;
+            boolean isRedirect = false;
+            for (Directory.Path p : State.getInstance(mainObject).as(Directory.ObjectModification.class).getPaths()) {
+                if (p.getType() == Directory.PathType.REDIRECT && path.equals(p.getPath())) {
+                    isRedirect = true;
+                } else if (p.getType() == Directory.PathType.PERMALINK) {
+                    redirectPath = p;
+                }
+            }
+
+            if (isRedirect && redirectPath != null) {
+                JspUtils.redirectPermanently(request, response, site != null ?
+                        site.getPrimaryUrl() + redirectPath.getPath() :
+                        redirectPath.getPath());
+                return;
+            }
+
+            Page page = Static.getPage(request);
+
+            if (page == null) {
+                State state = State.getInstance(mainObject);
+                ObjectType type = state.getType();
+                String script = type.as(Renderer.TypeModification.class).getScript();
+
+                if (!ObjectUtils.isBlank(script)) {
+                    page = Application.Static.getInstance(CmsTool.class).getModulePreviewTemplate();
+                }
+
+                if (page == null) {
+                    if (Settings.isProduction()) {
+                        chain.doFilter(request, response);
+                        return;
+
+                    } else {
+                        throw new IllegalStateException(String.format(
+                                "No template for [%s] [%s]! (ID: %s)",
+                                mainObject.getClass().getName(),
+                                state.getLabel(),
+                                state.getId().toString().replaceAll("-", "")));
+                    }
+                }
+            }
+
+            // Set up a profile.
+            PrintWriter writer = response.getWriter();
+            debugObject(request, writer, "Main object is", mainObject);
+
+            Map<String, Object> seo = new HashMap<String, Object>();
+            seo.put("title", Seo.Static.findTitle(mainObject));
+            seo.put("description", Seo.Static.findDescription(mainObject));
+            Set<String> keywords = Seo.Static.findKeywords(mainObject);
+            if (keywords != null) {
+                seo.put("keywords", keywords);
+                seo.put("keywordsString", keywords.toString());
+            }
+            request.setAttribute("seo", seo);
+
+            // Try to set the right content type based on the extension.
+            String contentType = URLConnection.getFileNameMap().getContentTypeFor(servletPath);
+            response.setContentType((ObjectUtils.isBlank(contentType) ? "text/html" : contentType) + ";charset=UTF-8");
+
+            // Render the page.
+            if (Boolean.parseBoolean(request.getParameter(OVERLAY_PARAMETER))) {
+                writer.write("<span class=\"cms-mainObject\" style=\"display: none;\">");
+                Map<String, String> map = new HashMap<String, String>();
+                State state = State.getInstance(mainObject);
+                map.put("id", state.getId().toString());
+                map.put("label", state.getLabel());
+                map.put("typeLabel", state.getType().getLabel());
+                writer.write(ObjectUtils.toJson(map));
+                writer.write("</span>");
+            }
+
+            HtmlWriter html = new HtmlWriter(writer);
+            html.putAllStandardDefaults();
+            html.putOverride(Recordable.class, new RecordableFormatter());
+
+            boolean wireframe = isWireframe(request);
+            String id = null;
+
+            if (wireframe) {
+                id = writeWireframeWrapperBegin(request, html);
+            }
+
+            beginPage(request, response, html, page);
+
+            if (!response.isCommitted()) {
+                request.getSession();
+            }
+
+            Page.Layout layout = page.getLayout();
+
+            if (layout != null) {
+                renderSection(request, response, html, layout.getOutermostSection());
+            }
+
+            endPage(request, response, html, page);
+
+            if (wireframe) {
+                writeWireframeWrapperEnd(request, html, id);
+            }
 
         } finally {
-            if (!isAuthenticated) {
-                Database.Static.restoreDefault();
-            }
+            Database.Static.restoreDefault();
         }
-    }
-
-    private void doPage(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain chain)
-            throws IOException, ServletException {
-
-        String servletPath = request.getServletPath();
-
-        // Serve a special robots.txt file for non-production.
-        if (servletPath.equals("/robots.txt") && !Settings.isProduction()) {
-            response.setContentType("text/plain");
-            PrintWriter writer = response.getWriter();
-            writer.println("User-agent: *");
-            writer.println("Disallow: /");
-            return;
-
-        // Render a single section.
-        } else if (servletPath.startsWith("/_render")) {
-            UUID sectionId = ObjectUtils.to(UUID.class, request.getParameter("_sectionId"));
-            Section section = Query.findById(Section.class, sectionId);
-            if (section != null) {
-                writeSection(request, response, response.getWriter(), section);
-            }
-            return;
-
-        // Strip the special directory suffix.
-        } else if (servletPath.endsWith("/index")) {
-            JspUtils.redirectPermanently(request, response, servletPath.substring(0, servletPath.length() - 5));
-            return;
-        }
-
-        // Global prefix?
-        String prefix = Settings.get(String.class, "cms/db/directoryPrefix");
-        if (!ObjectUtils.isBlank(prefix)) {
-            Static.setPath(request, StringUtils.ensureEnd(prefix, "/") + servletPath);
-        }
-
-        Site site = Static.getSite(request);
-        if (redirectIfFixedPath(request, response)) {
-            return;
-        }
-
-        Object mainObject = Static.getMainObject(request);
-        if (redirectIfFixedPath(request, response)) {
-            return;
-        } else {
-            HttpServletRequest newRequest = (HttpServletRequest) request.getAttribute(NEW_REQUEST_ATTRIBUTE);
-            if (newRequest != null) {
-                request = newRequest;
-            }
-        }
-
-        // Not handled by the CMS.
-        if (mainObject == null) {
-            chain.doFilter(request, response);
-            return;
-        }
-
-        // If mainObject has a redirect path AND a permalink and the
-        // current request is the redirect path, then redirect to the
-        // permalink.
-        String path = Static.getPath(request);
-        Directory.Path redirectPath = null;
-        boolean isRedirect = false;
-        for (Directory.Path p : State.getInstance(mainObject).as(Directory.ObjectModification.class).getPaths()) {
-            if (p.getType() == Directory.PathType.REDIRECT && path.equals(p.getPath())) {
-                isRedirect = true;
-            } else if (p.getType() == Directory.PathType.PERMALINK) {
-                redirectPath = p;
-            }
-        }
-
-        if (isRedirect && redirectPath != null) {
-            JspUtils.redirectPermanently(request, response, site != null ?
-                    site.getPrimaryUrl() + redirectPath.getPath() :
-                    redirectPath.getPath());
-            return;
-        }
-
-        Page page = Static.getPage(request);
-        if (page == null) {
-            chain.doFilter(request, response);
-            return;
-        }
-
-        // Set up a profile.
-        PrintWriter writer = response.getWriter();
-        debugObject(request, writer, "Main object is", mainObject);
-
-        Map<String, Object> seo = new HashMap<String, Object>();
-        seo.put("title", Seo.Static.findTitle(mainObject));
-        seo.put("description", Seo.Static.findDescription(mainObject));
-        Set<String> keywords = Seo.Static.findKeywords(mainObject);
-        if (keywords != null) {
-            seo.put("keywords", keywords);
-            seo.put("keywordsString", keywords.toString());
-        }
-        request.setAttribute("seo", seo);
-
-        // Try to set the right content type based on the extension.
-        String contentType = URLConnection.getFileNameMap().getContentTypeFor(servletPath);
-        response.setContentType((ObjectUtils.isBlank(contentType) ? "text/html" : contentType) + ";charset=UTF-8");
-
-        // Render the page.
-        if (Boolean.parseBoolean(request.getParameter(OVERLAY_PARAMETER))) {
-            writer.write("<span class=\"cms-mainObject\" style=\"display: none;\">");
-            Map<String, String> map = new HashMap<String, String>();
-            State state = State.getInstance(mainObject);
-            map.put("id", state.getId().toString());
-            map.put("label", state.getLabel());
-            map.put("typeLabel", state.getType().getLabel());
-            writer.write(ObjectUtils.toJson(map));
-            writer.write("</span>");
-        }
-
-        beginPage(request, response, writer, page);
-        if (!response.isCommitted()) {
-            request.getSession();
-        }
-        Page.Layout layout = page.getLayout();
-        if (layout != null) {
-            renderSection(request, response, writer, layout.getOutermostSection());
-        }
-        endPage(request, response, writer, page);
     }
 
     /** Renders the beginning of the given {@code page}. */
@@ -570,19 +563,30 @@ public class PageFilter extends AbstractFilter {
             Section section)
             throws IOException, ServletException {
 
+        boolean wireframe = isWireframe(request);
+
+        if (wireframe) {
+            writeWireframeSectionBegin(writer, section);
+        }
+
         // Container section - begin, child sections, then end.
         if (section instanceof ContainerSection) {
             ContainerSection container = (ContainerSection) section;
-            addParentSection(request, container);
+            List<Section> children = container.getChildren();
+
             try {
+                addParentSection(request, container);
                 beginContainer(request, response, writer, container);
-                for (Section child : container.getChildren()) {
+
+                for (Section child : children) {
                     renderSection(request, response, writer, child);
                     if (isAborted(request)) {
                         return;
                     }
                 }
+
                 endContainer(request, response, writer, container);
+
             } finally {
                 removeLastParentSection(request);
             }
@@ -599,6 +603,225 @@ public class PageFilter extends AbstractFilter {
             }
             renderObjectWithSection(request, response, writer, object, (ScriptSection) section);
         }
+
+        if (wireframe) {
+            writeWireframeSectionEnd(writer, section);
+        }
+    }
+
+    private static boolean isWireframe(HttpServletRequest request) {
+        return !Settings.isProduction() &&
+                ObjectUtils.to(boolean.class, request.getParameter(WIREFRAME_PARAMETER));
+    }
+
+    private static String writeWireframeWrapperBegin(HttpServletRequest request, Writer writer) throws IOException {
+        HtmlWriter html = (HtmlWriter) writer;
+        String id = JspUtils.createId(request);
+
+        html.start("div", "id", id);
+
+        return id;
+    }
+
+    private static void writeWireframeWrapperEnd(HttpServletRequest request, Writer writer, String id) throws IOException {
+        HtmlWriter html = (HtmlWriter) writer;
+
+        html.end();
+
+        html.start("script", "type", "text/javascript");
+            html.write("(function() {");
+                html.write("var f = document.createElement('iframe');");
+                html.write("f.frameBorder = '0';");
+                html.write("var fs = f.style;");
+                html.write("fs.background = 'transparent';");
+                html.write("fs.border = 'none';");
+                html.write("fs.overflow = 'hidden';");
+                html.write("fs.width = '100%';");
+                html.write("f.src = '");
+                html.write(JspUtils.getAbsolutePath(request, "/_resource/cms/section.html", "id", id));
+                html.write("';");
+                html.write("var a = document.getElementById('");
+                html.write(id);
+                html.write("');");
+                html.write("a.parentNode.insertBefore(f, a.nextSibling);");
+            html.write("})();");
+        html.end();
+    }
+
+    private static void writeWireframeSectionBegin(Writer writer, Section section) throws IOException {
+        HtmlWriter html = (HtmlWriter) writer;
+        String sectionName = section.getName();
+
+        StringBuilder className = new StringBuilder();
+        className.append("cms-section cms-section-transform");
+        className.append((int) (Math.random() * 4));
+
+        if (section instanceof ContainerSection) {
+            className.append(" cms-section-container");
+
+            if (section instanceof HorizontalContainerSection) {
+                className.append(" cms-section-horizontal");
+            }
+        }
+
+        html.start("div", "class", className);
+        html.start("h2");
+
+            if (ObjectUtils.isBlank(sectionName)) {
+                html.html("Unnamed ");
+                html.html(section.getState().getType().getLabel());
+
+            } else {
+                html.html(sectionName);
+            }
+
+        html.end();
+
+        if (section instanceof HorizontalContainerSection) {
+            html.start("div", "class", "cms-section-horizontal-table");
+        }
+    }
+
+    private static void writeWireframeSectionEnd(Writer writer, Section section) throws IOException {
+        HtmlWriter html = (HtmlWriter) writer;
+
+        if (section instanceof HorizontalContainerSection) {
+            html.end();
+        }
+
+        html.end();
+    }
+
+    private static void writeWireframeSection(HttpServletRequest request, HtmlWriter html, String script) throws Exception {
+        if (!ObjectUtils.isBlank(script)) {
+            html.start("p");
+                html.html("Rendered using ");
+                html.start("code").html(script).end();
+                html.html(".");
+            html.end();
+
+        } else {
+            Object object = getCurrentObject(request);
+
+            if (object != null) {
+                String className = object.getClass().getName();
+                File source = CodeUtils.getSource(className);
+
+                html.start("p", "class", "alert alert-error");
+                    html.html("No renderer! Add ");
+                    html.start("code").html("@Renderer.Script").end();
+                    html.html(" to the ");
+
+                    if (source == null) {
+                        html.html(className);
+
+                    } else {
+                        html.start("a",
+                                "href", DebugFilter.Static.getServletPath(request, "code", "file", source),
+                                "target", "code");
+                            html.html(className);
+                        html.end();
+                    }
+
+                    html.html(" class.");
+                html.end();
+
+            } else {
+                Page page = getPage(request);
+
+                if (ObjectUtils.isBlank(script)) {
+                    html.start("p", "class", "alert alert-error");
+                        html.html("No renderer! Specify it in the ");
+                        html.start("a",
+                                "href", StringUtils.addQueryParameters("/cms/content/edit.jsp", "id", page.getId()),
+                                "target", "cms");
+                            html.html(page.getName());
+                        html.end();
+                        html.html(" ").html(page.getClass().getSimpleName().toLowerCase()).html(".");
+                    html.end();
+                }
+            }
+        }
+
+        String classId = JspUtils.createId(request);
+        Map<String, String> names = new TreeMap<String, String>();
+
+        for (
+                @SuppressWarnings("unchecked")
+                Enumeration<String> e = request.getAttributeNames();
+                e.hasMoreElements(); ) {
+            String name = e.nextElement();
+            if (!name.contains(".")) {
+                names.put(name, JspUtils.createId(request));
+            }
+        }
+
+        names.remove("mainObject");
+        names.remove("mainRecord");
+        names.remove("object");
+        names.remove("record");
+
+        html.start("form");
+            html.start("select", "name", "name", "onchange", "$('." + classId + "').hide(); $('#' + $(this).find(':selected').data('jstl-id')).show();");
+                html.start("option", "value", "").html("Available JSTL Expressions").end();
+                for (Map.Entry<String, String> entry : names.entrySet()) {
+                    String name = entry.getKey();
+                    html.start("option", "value", name, "data-jstl-id", entry.getValue());
+                        html.html("${").html(name).html("}");
+                    html.end();
+                }
+            html.end();
+
+            for (Map.Entry<String, String> entry : names.entrySet()) {
+                String name = entry.getKey();
+                Object value = request.getAttribute(name);
+
+                html.start("div",
+                        "class", classId,
+                        "id", entry.getValue(),
+                        "style", "display: none;");
+
+                    html.start("h3").html(value.getClass().getName()).end();
+
+                    html.start("dl");
+
+                        if (value instanceof Map) {
+                            for (Map.Entry<?, ?> entry2 : ((Map<?, ?>) value).entrySet()) {
+                                html.start("dt").start("code").html("${").html(name).html("['").html(entry2.getKey()).html("']}").end().end();
+                                html.start("dd").object(entry2.getValue()).end();
+                            }
+
+                        } else if (value instanceof List) {
+                            List<?> valueList = (List<?>) value;
+
+                            for (int i = 0, size = valueList.size(); i < size; ++ i) {
+                                html.start("dt").start("code").html("${").html(name).html("[").html(i).html("]}").end().end();
+                                html.start("dd").object(valueList.get(i)).end();
+                            }
+
+                        } else {
+                            for (PropertyDescriptor propDesc : Introspector.getBeanInfo(value.getClass()).getPropertyDescriptors()) {
+                                String getterName = propDesc.getName();
+                                Method getterMethod = propDesc.getReadMethod();
+
+                                if (getterMethod == null ||
+                                        "class".equals(getterName) ||
+                                        "state".equals(getterName) ||
+                                        "modifications".equals(getterName) ||
+                                        getterMethod.isAnnotationPresent(Deprecated.class)) {
+                                    continue;
+                                }
+
+                                html.start("dt").start("code").html("${").html(name).html(".").html(getterName).html("}").end().end();
+                                html.start("dd").object(getterMethod.invoke(value)).end();
+                            }
+                        }
+
+                    html.end();
+
+                html.end();
+            }
+        html.end();
     }
 
     /**
@@ -736,7 +959,7 @@ public class PageFilter extends AbstractFilter {
         }
     }
 
-    /** Renders the given {@code script} using the given {@code engine}. */
+    // Renders the given script using the given engine.
     private static void renderScript(
             HttpServletRequest request,
             HttpServletResponse response,
@@ -746,22 +969,63 @@ public class PageFilter extends AbstractFilter {
             throws IOException, ServletException {
 
         long startTime = System.nanoTime();
-        try {
 
+        try {
             debugMessage(request, writer, "Engine is [%s]", engine);
             debugMessage(request, writer, "Script is [%s]", script);
 
-            if (!ObjectUtils.isBlank(engine)) {
-                if ("JSP".equals(engine)) {
-                    JspUtils.include(request, response, writer, "/" + script);
+            boolean wireframe = isWireframe(request);
 
-                } else if ("RawText".equals(engine)) {
-                    writer.write(script);
+            if (!wireframe) {
+                if (!ObjectUtils.isBlank(engine)) {
+                    if ("JSP".equals(engine)) {
+                        if (!ObjectUtils.isBlank(script)) {
+                            JspUtils.include(request, response, writer, StringUtils.ensureStart(script, "/"));
+                            return;
+                        }
 
-                } else {
-                    throw new IllegalArgumentException(String.format(
-                            "[%s] is not a valid rendering engine!", engine));
+                    } else if ("RawText".equals(engine)) {
+                        writer.write(script);
+                        return;
+
+                    } else {
+                        throw new IllegalArgumentException(String.format(
+                                "[%s] is not a valid rendering engine!", engine));
+                    }
                 }
+
+                Object object = getCurrentObject(request);
+
+                if (object instanceof HtmlObject) {
+                    new HtmlWriter(writer).object(object);
+                }
+
+                if (Settings.isProduction()) {
+                    return;
+                }
+            }
+
+            Section section = getCurrentSection(request);
+
+            if (!(section instanceof ScriptSection)) {
+                return;
+            }
+
+            if (!(writer instanceof HtmlWriter)) {
+                return;
+            }
+
+            HtmlWriter html = (HtmlWriter) writer;
+
+            if (wireframe) {
+                writeWireframeSection(request, html, script);
+
+            } else {
+                String id = writeWireframeWrapperBegin(request, writer);
+                    writeWireframeSectionBegin(writer, section);
+                        writeWireframeSection(request, html, script);
+                    writeWireframeSectionEnd(writer, section);
+                writeWireframeWrapperEnd(request, writer, id);
             }
 
         // Always catch the error so the page never looks broken
@@ -769,6 +1033,7 @@ public class PageFilter extends AbstractFilter {
         } catch (Throwable ex) {
             if (Settings.isProduction()) {
                 LOGGER.warn(String.format("Can't render [%s]!", script), ex);
+
             } else if (ex instanceof IOException) {
                 throw (IOException) ex;
             } else if (ex instanceof ServletException) {
@@ -787,6 +1052,44 @@ public class PageFilter extends AbstractFilter {
                     engine,
                     script,
                     (System.nanoTime() - startTime) / 1000000.0);
+        }
+    }
+
+    private static class RecordableFormatter implements HtmlFormatter<Recordable> {
+
+        @Override
+        public void format(HtmlWriter writer, Recordable recordable) throws IOException {
+            State state = recordable.getState();
+            String permalink = state.as(Directory.ObjectModification.class).getPermalink();
+            ObjectType type = state.getType();
+            StringBuilder label = new StringBuilder();
+
+            if (type != null) {
+                label.append(type.getLabel());
+                label.append(": ");
+            }
+            label.append(state.getLabel());
+
+            if (ObjectUtils.isBlank(permalink)) {
+                writer.html(label);
+
+            } else {
+                writer.start("a",
+                        "href", StringUtils.addQueryParameters(permalink, "_wireframe", true),
+                        "target", "cms");
+                    writer.html(label);
+                writer.end();
+            }
+
+            if (!type.isEmbedded()) {
+                writer.html(" - ");
+
+                writer.start("a",
+                        "href", StringUtils.addQueryParameters("/cms/content/edit.jsp", "id", state.getId()),
+                        "target", "cms");
+                    writer.html("Edit");
+                writer.end();
+            }
         }
     }
 
@@ -899,141 +1202,160 @@ public class PageFilter extends AbstractFilter {
                 return request.getAttribute(MAIN_OBJECT_ATTRIBUTE);
             }
 
-            request.setAttribute(MAIN_OBJECT_CHECKED_ATTRIBUTE, Boolean.TRUE);
+            VaryingDatabase varying = new VaryingDatabase();
+            varying.setDelegate(Database.Static.getDefault());
+            varying.setRequest(request);
+            varying.setProfile(getProfile(request));
+            Database.Static.overrideDefault(varying);
 
-            Object mainObject = null;
-            String servletPath = request.getServletPath();
-            String path = getPath(request);
-            Site site = getSite(request);
+            try {
+                request.setAttribute(MAIN_OBJECT_CHECKED_ATTRIBUTE, Boolean.TRUE);
 
-            // On preview request, manually create the main object based on
-            // the post data.
-            if (path.startsWith("/_preview")) {
-                UUID previewId = ObjectUtils.to(UUID.class, request.getParameter(PREVIEW_ID_PARAMETER));
-                if (previewId != null) {
+                Object mainObject = null;
+                String servletPath = request.getServletPath();
+                String path = getPath(request);
+                Site site = getSite(request);
 
-                    String[] objectStrings = request.getParameterValues(PREVIEW_OBJECT_PARAMETER);
-                    Map<UUID, Object> substitutions = getSubstitutions(request);
-                    if (objectStrings != null) {
-                        for (String objectString : objectStrings) {
-                            if (!ObjectUtils.isBlank(objectString)) {
-                                @SuppressWarnings("unchecked")
-                                Map<String, Object> objectMap = (Map<String, Object>) ObjectUtils.fromJson(objectString.trim());
-                                ObjectType type = ObjectType.getInstance(ObjectUtils.to(UUID.class, objectMap.remove("_typeId")));
-                                if (type != null) {
-                                    Object object = type.createObject(ObjectUtils.to(UUID.class, objectMap.remove("_id")));
-                                    State objectState = State.getInstance(object);
-                                    objectState.setValues(objectMap);
-                                    substitutions.put(objectState.getId(), object);
+                // On preview request, manually create the main object based on
+                // the post data.
+                if (path.startsWith("/_preview")) {
+                    UUID previewId = ObjectUtils.to(UUID.class, request.getParameter(PREVIEW_ID_PARAMETER));
+                    if (previewId != null) {
+
+                        String[] objectStrings = request.getParameterValues(PREVIEW_OBJECT_PARAMETER);
+                        Map<UUID, Object> substitutions = getSubstitutions(request);
+                        if (objectStrings != null) {
+                            for (String objectString : objectStrings) {
+                                if (!ObjectUtils.isBlank(objectString)) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> objectMap = (Map<String, Object>) ObjectUtils.fromJson(objectString.trim());
+                                    ObjectType type = ObjectType.getInstance(ObjectUtils.to(UUID.class, objectMap.remove("_typeId")));
+                                    if (type != null) {
+                                        Object object = type.createObject(ObjectUtils.to(UUID.class, objectMap.remove("_id")));
+                                        State objectState = State.getInstance(object);
+                                        objectState.setValues(objectMap);
+                                        substitutions.put(objectState.getId(), object);
+                                    }
                                 }
+                            }
+                        }
+
+                        Object preview = Query.findById(Object.class, previewId);
+
+                        if (preview instanceof Draft) {
+                            mainObject = ((Draft) preview).getObject();
+
+                        } else if (preview instanceof History) {
+                            mainObject = ((History) preview).getObject();
+
+                        } else if (preview instanceof Preview) {
+                            mainObject = ((Preview) preview).getObject();
+
+                        } else {
+                            mainObject = substitutions.get(previewId);
+
+                            if (mainObject == null) {
+                                mainObject = preview;
                             }
                         }
                     }
 
-                    Preview preview = Query.findById(Preview.class, previewId);
-                    if (preview != null) {
-                        mainObject = preview.getObject();
+                    if (mainObject != null) {
+                        setSite(request, State.getInstance(mainObject).as(Site.ObjectModification.class).getOwner());
+                    }
 
-                    } else {
-                        mainObject = substitutions.get(previewId);
-                        if (mainObject == null) {
-                            mainObject = Query.findById(Object.class, previewId);
+                } else {
+                    mainObject = Directory.Static.findObject(site, path);
+                    if (mainObject != null) {
+
+                        // Directories should have a trailing slash and objects
+                        // should not.
+                        if (mainObject instanceof Directory) {
+                            if (!path.endsWith("/")) {
+                                fixPath(request, servletPath + "/");
+                            }
+                            mainObject = Directory.Static.findObject(site, path + "/index");
+
+                        } else if (path.endsWith("/")) {
+                            fixPath(request, servletPath.substring(0, servletPath.length() - 1));
                         }
                     }
                 }
 
-                if (mainObject != null) {
-                    setSite(request, State.getInstance(mainObject).as(Site.ObjectModification.class).getOwner());
+                // Case-insensitive path look-up.
+                for (int i = 0, length = path.length(); i < length; ++ i) {
+                    if (Character.isUpperCase(path.charAt(i))) {
+                        String pathLc = path.toLowerCase(Locale.ENGLISH);
+                        if (Directory.Static.findObject(site, pathLc) != null) {
+                            fixPath(request, pathLc);
+                        }
+                        break;
+                    }
                 }
 
-            } else {
-                mainObject = Directory.Static.findObject(site, path);
-                if (mainObject != null) {
+                // Special fallback names. For example, given /path/to/file,
+                // the following are checked:
+                //
+                // - /path/to/file/*
+                // - /path/to/file/**
+                // - /path/to/*
+                // - /path/to/**
+                // - /path/**
+                // - /**
+                String checkPath;
+                int endMarker;
 
-                    // Directories should have a trailing slash and objects
-                    // should not.
+                if (path.endsWith("/")) {
+                    checkPath = path;
+                    endMarker = 0;
+
+                } else {
+                    checkPath = path + "/";
+                    endMarker = 1;
+                }
+
+                for (int i = 0; mainObject == null; ++ i) {
+                    int slashAt = checkPath.lastIndexOf("/");
+
+                    if (slashAt < 0) {
+                        break;
+                    } else {
+                        checkPath = checkPath.substring(0, slashAt);
+                    }
+
+                    if (i <= endMarker) {
+                        mainObject = Directory.Static.findObject(site, checkPath + "/*");
+                    }
+
+                    if (mainObject == null) {
+                        mainObject = Directory.Static.findObject(site, checkPath + "/**");
+                    }
+
                     if (mainObject instanceof Directory) {
-                        if (!path.endsWith("/")) {
+                        mainObject = null;
+                    }
+
+                    if (mainObject != null) {
+                        final String pathInfo = path.substring(checkPath.length());
+                        if (pathInfo.length() < 1) {
                             fixPath(request, servletPath + "/");
                         }
-                        mainObject = Directory.Static.findObject(site, path + "/index");
 
-                    } else if (path.endsWith("/")) {
-                        fixPath(request, servletPath.substring(0, servletPath.length() - 1));
+                        request.setAttribute(NEW_REQUEST_ATTRIBUTE, new HttpServletRequestWrapper(request) {
+                            @Override
+                            public String getPathInfo() {
+                                return pathInfo;
+                            }
+                        });
                     }
                 }
+
+                setMainObject(request, mainObject);
+                return mainObject;
+
+            } finally {
+                Database.Static.restoreDefault();
             }
-
-            // Case-insensitive path look-up.
-            for (int i = 0, length = path.length(); i < length; ++ i) {
-                if (Character.isUpperCase(path.charAt(i))) {
-                    String pathLc = path.toLowerCase(Locale.ENGLISH);
-                    if (Directory.Static.findObject(site, pathLc) != null) {
-                        fixPath(request, pathLc);
-                    }
-                    break;
-                }
-            }
-
-            // Special fallback names. For example, given /path/to/file,
-            // the following are checked:
-            //
-            // - /path/to/file/*
-            // - /path/to/file/**
-            // - /path/to/*
-            // - /path/to/**
-            // - /path/**
-            // - /**
-            String checkPath;
-            int endMarker;
-
-            if (path.endsWith("/")) {
-                checkPath = path;
-                endMarker = 0;
-
-            } else {
-                checkPath = path + "/";
-                endMarker = 1;
-            }
-
-            for (int i = 0; mainObject == null; ++ i) {
-                int slashAt = checkPath.lastIndexOf("/");
-
-                if (slashAt < 0) {
-                    break;
-                } else {
-                    checkPath = checkPath.substring(0, slashAt);
-                }
-
-                if (i <= endMarker) {
-                    mainObject = Directory.Static.findObject(site, checkPath + "/*");
-                }
-
-                if (mainObject == null) {
-                    mainObject = Directory.Static.findObject(site, checkPath + "/**");
-                }
-
-                if (mainObject instanceof Directory) {
-                    mainObject = null;
-                }
-
-                if (mainObject != null) {
-                    final String pathInfo = path.substring(checkPath.length());
-                    if (pathInfo.length() < 1) {
-                        fixPath(request, servletPath + "/");
-                    }
-
-                    request.setAttribute(NEW_REQUEST_ATTRIBUTE, new HttpServletRequestWrapper(request) {
-                        @Override
-                        public String getPathInfo() {
-                            return pathInfo;
-                        }
-                    });
-                }
-            }
-
-            setMainObject(request, mainObject);
-            return mainObject;
         }
 
         /** Sets the main object associated with the given {@code request}. */
@@ -1070,6 +1392,7 @@ public class PageFilter extends AbstractFilter {
         public static void setPage(HttpServletRequest request, Page page) {
             request.setAttribute(PAGE_CHECKED_ATTRIBUTE, Boolean.TRUE);
             request.setAttribute(PAGE_ATTRIBUTE, page);
+            request.setAttribute("template", page);
         }
 
         /** Returns the profile used to process the given {@code request}. */
@@ -1091,6 +1414,7 @@ public class PageFilter extends AbstractFilter {
         public static void setProfile(HttpServletRequest request, Profile profile) {
             request.setAttribute(PROFILE_CHECKED_ATTRIBUTE, Boolean.TRUE);
             request.setAttribute(PROFILE_ATTRIBUTE, profile);
+            request.setAttribute("profile", profile);
         }
 
         // --- EL functions ---

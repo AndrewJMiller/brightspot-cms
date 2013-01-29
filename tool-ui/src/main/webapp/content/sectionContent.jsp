@@ -10,6 +10,10 @@ java.util.UUID
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requireUser()) {
+    return;
+}
+
 String pageId = wp.createId();
 
 Object object = wp.findOrReserve();
@@ -40,7 +44,7 @@ if (state != null && wp.isFormPost()) {
     <% wp.include("/WEB-INF/objectHeading.jsp", "object", object); %>
 
     <form action="<%= wp.url("", "typeId", state.getTypeId(), "id", state.getId()) %>" enctype="multipart/form-data" id="<%= pageId %>" method="post">
-        <p><a class="icon-arrow_switch" href="<%= wp.url("", "typeId", null, "id", null) %>">Change Content</a>
+        <p><a class="icon icon-arrow_switch" href="<%= wp.url("", "typeId", null, "id", null) %>">Change Content</a>
         <% wp.include("/WEB-INF/errors.jsp"); %>
         <% wp.include("/WEB-INF/objectForm.jsp", "object", object); %>
         <div class="buttons">
@@ -66,7 +70,7 @@ if (state != null && wp.isFormPost()) {
                 definition.contentTypeLabel = '<%= wp.js(state.getType().getLabel()) %>';
                 definition.contentLabel = '<%= wp.js(state.getLabel()) %>';
                 $source.text(definition.contentTypeLabel + ': ' + definition.contentLabel);
-                $source.closest('.visualPageLayout').trigger('updateJson');
+                $source.closest('.pageLayout-visual').trigger('updateJson');
             }
         })(jQuery);
     </script>

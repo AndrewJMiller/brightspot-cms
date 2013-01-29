@@ -1,5 +1,6 @@
 package com.psddev.cms.db;
 
+import com.psddev.dari.db.Database;
 import com.psddev.dari.db.Query;
 import com.psddev.dari.db.Record;
 import com.psddev.dari.db.State;
@@ -98,7 +99,7 @@ public class Variation extends Record {
 
                     @Override
                     protected List<Variation> update() {
-                        Query<Variation> query = Query.from(Variation.class).sortAscending("position");
+                        Query<Variation> query = Query.from(Variation.class).sortAscending("position").using(Database.Static.getDefaultOriginal());
                         Date cacheUpdate = getUpdateDate();
                         Date databaseUpdate = query.lastUpdate();
 
@@ -128,10 +129,19 @@ public class Variation extends Record {
             List<Variation> applied = getApplied(object);
 
             for (Variation variation : ALL.get().get()) {
-                if (!applied.contains(variation) &&
-                        variation.getRule().evaluate(variation, profile, object)) {
-                    applied.add(variation);
-                    variation.getOperation().evaluate(variation, profile, object);
+                try {
+                    if (!applied.contains(variation) &&
+                            variation.getRule().evaluate(variation, profile, object)) {
+                        applied.add(variation);
+                        variation.getOperation().evaluate(variation, profile, object);
+                    }
+
+                } catch (Throwable error) {
+                    LOGGER.warn(String.format(
+                            "Can't apply variation [%s] to [%s]!",
+                            variation.getId(),
+                            State.getInstance(object).getId()),
+                            error);
                 }
             }
         }

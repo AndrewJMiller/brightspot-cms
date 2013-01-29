@@ -35,8 +35,8 @@ if (fieldValue == null) {
 }
 
 List<ObjectType> validTypes = new ArrayList<ObjectType>(field.findConcreteTypes());
-boolean isValueExternal = true;
-if (validTypes != null && validTypes.size() > 0) {
+boolean isValueExternal = !field.isEmbedded();
+if (isValueExternal && validTypes != null && validTypes.size() > 0) {
     isValueExternal = false;
     for (ObjectType type : validTypes) {
         if (!type.isEmbedded()) {
@@ -113,20 +113,26 @@ if ((Boolean) request.getAttribute("isFormPost")) {
 
 <%
 } else {
-    Set<ObjectType> valueTypes = field.getTypes();
-    String validTypeIds;
-    if (ObjectUtils.isBlank(valueTypes)) {
-        validTypeIds = "";
-    } else {
-        StringBuilder sb = new StringBuilder();
-        for (ObjectType type : valueTypes) {
-            sb.append(type.getId()).append(",");
+    Set<ObjectType> types = field.getTypes();
+    StringBuilder typeIdsCsv = new StringBuilder();
+    StringBuilder typeIdsQuery = new StringBuilder();
+    boolean previewable = false;
+
+    if (types != null && !types.isEmpty()) {
+        for (ObjectType type : types) {
+            typeIdsCsv.append(type.getId()).append(",");
+            typeIdsQuery.append("typeId=").append(type.getId()).append("&");
+
+            if (!ObjectUtils.isBlank(type.getPreviewField())) {
+                previewable = true;
+            }
         }
-        sb.setLength(sb.length() - 1);
-        validTypeIds = sb.toString();
+
+        typeIdsCsv.setLength(typeIdsCsv.length() - 1);
+        typeIdsQuery.setLength(typeIdsQuery.length() - 1);
     }
     %>
-    <div class="smallInput repeatableObjectId">
+    <div class="smallInput repeatableObjectId<%= previewable ? " repeatableObjectId-previewable" : "" %>">
         <ol>
             <%
             if (fieldValue != null) {
@@ -139,7 +145,7 @@ if ((Boolean) request.getAttribute("isFormPost")) {
                             class="objectId"
                             data-searcher-path="<%= wp.h(field.as(ToolUi.class).getInputSearcherPath()) %>"
                             data-label="<%= (validTypes == null || validTypes.size() != 1 ? wp.typeLabel(item) + ": " : "") + wp.objectLabel(item) %>"
-                            data-typeIds="<%= wp.h(validTypeIds) %>"
+                            data-typeIds="<%= wp.h(typeIdsCsv) %>"
                             data-pathed="<%= ToolUi.isOnlyPathed(field) %>"
                             data-additional-query="<%= wp.h(field.getPredicate()) %>"
                             data-preview="<%= preview != null ? preview.getUrl() : "" %>"
@@ -154,12 +160,16 @@ if ((Boolean) request.getAttribute("isFormPost")) {
             <li class="template"><input
                     class="objectId"
                     data-searcher-path="<%= wp.h(field.as(ToolUi.class).getInputSearcherPath()) %>"
-                    data-typeIds="<%= wp.h(validTypeIds) %>"
+                    data-typeIds="<%= wp.h(typeIdsCsv) %>"
                     data-pathed="<%= ToolUi.isOnlyPathed(field) %>"
                     data-additional-query="<%= wp.h(field.getPredicate()) %>"
                     name="<%= wp.h(inputName) %>"
                     type="text"
                     ></li>
         </ol>
+
+        <% if (previewable) { %>
+            <a class="action-upload" href="<%= wp.url("/content/uploadFiles?" + typeIdsQuery) %>" target="uploadFiles">Upload Files</a>
+        <% } %>
     </div>
 <% } %>

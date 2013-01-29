@@ -10,6 +10,11 @@ com.psddev.dari.db.ObjectType
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+
+if (wp.requireUser()) {
+    return;
+}
+
 Template selectedTemplate = Database.Static.findById(wp.getDatabase(), Template.class, wp.uuidParam("templateId"));
 
 // --- Presentation ---

@@ -19,6 +19,10 @@ private static final String[] POSITIONS = new String[] {
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requireUser()) {
+    return;
+}
+
 Object object = wp.findOrReserve();
 if (wp.include("/WEB-INF/objectPublish.jsp", "object", object)) {
     return;
@@ -32,8 +36,14 @@ StorageItem preview = state.getPreview();
 
 wp.writeHeader();
 wp.include("/WEB-INF/objectHeading.jsp", "object", object);
-
-%><p style="position: absolute; right: 15px; top: 8px;"><a class="icon-pencil" href="<%= wp.objectUrl("/content/edit.jsp", object) %>" target="_blank">Edit in Full</a></p>
+if (wp.hasPermission("type/" + state.getTypeId() + "/write")) {
+    wp.write("<p style=\"position: absolute; right: 15px; top: 8px;\">");
+    wp.write("<a class=\"action-edit\" href=\"");
+    wp.write(wp.objectUrl("/content/edit.jsp", object));
+    wp.write("\" target=\"_blank\">Edit in Full</a>");
+    wp.write("</p>");
+}
+%>
 <form action="<%= wp.objectUrl("", object) %>" enctype="multipart/form-data" id="<%= pageId %>" method="post">
 
     <% wp.include("/WEB-INF/errors.jsp"); %>
@@ -48,7 +58,7 @@ wp.include("/WEB-INF/objectHeading.jsp", "object", object);
                     wp.write("<input type=\"hidden\" name=\"");
                     wp.write(wp.h(state.getId()));
                     wp.write("/_widget\" value=\"");
-                    wp.write(wp.h(widget.getId()));
+                    wp.write(wp.h(widget.getInternalName()));
                     wp.write("\">");
 
                     String display = widget.display(wp, object);
@@ -58,10 +68,18 @@ wp.include("/WEB-INF/objectHeading.jsp", "object", object);
         }
         %>
     </div>
-
-    <div class="buttons">
-        <input type="submit" name="action" value="Publish" />
-    </div>
+    <%    
+        if (wp.hasPermission("type/" + state.getTypeId() + "/write")) {
+            wp.write("<div class=\"buttons\">");
+            wp.write("<input type=\"submit\" name=\"action\" value=\"Publish\" />");
+            wp.write("</div>");
+        }else{
+            wp.write("<div class=\"warning message\"><p>You cannot edit this ");
+            wp.write(wp.typeLabel(state));
+            wp.write("!</p></div>");
+        }
+        
+    %>
 </form>
 
 <script type="text/javascript">
@@ -76,7 +94,12 @@ if (typeof jQuery !== 'undefined') jQuery(function($) {
         $input.change();
     <% } %>
 
-    <% if (wp.isFormPost() && wp.getErrors().size() == 0) { %>
+    <% if (wp.isFormPost() && !wp.getErrors().isEmpty()) { %>
+        $page.popup('restoreOriginalPosition');
+    <% } %>
+
+    <% if (wp.param("published") != null) { %>
+        $page.popup('restoreOriginalPosition');
         $page.popup('close');
     <% } %>
 });

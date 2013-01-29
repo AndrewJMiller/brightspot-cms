@@ -1,68 +1,82 @@
 <%@ page import="
 
+com.psddev.cms.tool.CmsTool,
+com.psddev.cms.tool.JspWidget,
+com.psddev.cms.tool.Tool,
 com.psddev.cms.tool.ToolPageContext,
+com.psddev.cms.tool.Widget,
 
-com.psddev.dari.util.ObjectUtils,
+com.psddev.dari.util.HtmlWriter,
 
-java.io.IOException,
-java.util.Arrays,
+java.util.ArrayList,
+java.util.LinkedHashMap,
 java.util.List,
 java.util.Map
 " %><%
 
-// --- Logic ---
-
 ToolPageContext wp = new ToolPageContext(pageContext);
 
-// --- Presentation ---
+if (wp.requireUser()) {
+    return;
+}
 
-%><% wp.include("/WEB-INF/header.jsp"); %>
+wp.include("/WEB-INF/header.jsp");
 
-<div id="toolContent" class="noNav noAside layout">
-    <% renderBox(wp, ObjectUtils.to(Map.class, Arrays.asList(
-        "orientation", "horizontal",
-        "sections", Arrays.asList(
+HtmlWriter writer = new HtmlWriter(out);
+List<List<Widget>> widgetsByColumn = Tool.Static.getWidgets(CmsTool.DASHBOARD_WIDGET_POSITION);
+List<List<String>> namesByColumn = (List<List<String>>) wp.getUser().getState().get("dashboardWidgets");
 
-            ObjectUtils.to(Map.class, Arrays.asList(
-                "orientation", "vertical",
-                "flex", 3,
-                "sections", Arrays.asList(
-                    "/misc/siteMap.jsp",
-                    "/misc/recentActivity.jsp"
-                )
-            )),
+if (namesByColumn != null) {
+    Map<String, Widget> widgetsByName = new LinkedHashMap<String, Widget>();
 
-            ObjectUtils.to(Map.class, Arrays.asList(
-                "orientation", "vertical",
-                "flex", 2,
-                "sections", Arrays.asList(
-                    "/misc/pageBuilder.jsp",
-                    "/misc/scheduledEvents.jsp",
-                    "/misc/unpublishedDrafts.jsp"
-                )
-            ))
-
-        )
-    ))); %>
-</div>
-
-<% wp.include("/WEB-INF/footer.jsp"); %><%!
-
-private void renderBox(ToolPageContext wp, Object section) throws IOException {
-    if (section instanceof Map) {
-        Map<String, Object> sections = (Map<String, Object>) section;
-        wp.write("<div class=\"section container ");
-        wp.write(sections.get("orientation"));
-        Number flex = (Number) sections.get("flex");
-        wp.write(" \" data-flex=\"", flex != null ? flex : 1, "\">");
-        for (Object b : (List<Object>) sections.get("sections")) {
-            renderBox(wp, b);
+    for (List<Widget> widgets : widgetsByColumn) {
+        for (Widget widget : widgets) {
+            widgetsByName.put(widget.getInternalName(), widget);
         }
-        wp.write("</div>");
-    } else {
-        wp.write("<div class=\"widget section record frame\">");
-        wp.write("<a class=\"positioned\" href=\"", wp.url((String) section), "\">", wp.h(section), "</a>");
-        wp.write("</div>");
+    }
+
+    widgetsByColumn = new ArrayList<List<Widget>>();
+
+    for (List<String> names : namesByColumn) {
+        List<Widget> widgets = new ArrayList<Widget>();
+
+        widgetsByColumn.add(widgets);
+
+        for (String name : names) {
+            Widget widget = widgetsByName.remove(name);
+
+            if (widget != null) {
+                widgets.add(widget);
+            }
+        }
+    }
+
+    if (!widgetsByName.isEmpty()) {
+        List<Widget> widgets = widgetsByColumn.get(widgetsByColumn.size() - 1);
+
+        for (Widget widget : widgetsByName.values()) {
+            widgets.add(widget);
+        }
     }
 }
+
+writer.start("div", "class", "dashboard", "data-columns", widgetsByColumn.size());
+    for (List<Widget> widgets : widgetsByColumn) {
+        writer.start("div", "class", "dashboard_column");
+            for (Widget widget : widgets) {
+                if (widget instanceof JspWidget) {
+                    String jsp = ((JspWidget) widget).getJsp();
+
+                    writer.start("div", "class", "dashboard_cell", "data-widget", widget.getInternalName());
+                        writer.start("div", "class", "frame");
+                            writer.start("a", "href", wp.url(jsp)).html(jsp).end();
+                        writer.end();
+                    writer.end();
+                }
+            }
+        writer.end();
+    }
+writer.end();
+
+wp.include("/WEB-INF/footer.jsp");
 %>

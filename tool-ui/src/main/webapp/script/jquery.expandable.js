@@ -1,96 +1,88 @@
-if (typeof jQuery !== 'undefined') (function($) {
+/** Expandable INPUT[type=text] and TEXTAREA. */
+(function($, win, undef) {
 
-// Expandable input[type=text] and textarea.
-$.plugin('expandable', {
+var $win = $(win),
+        doc = win.document,
+        $allInputs = $(),
+        $checkers;
 
-'init': function(options) {
-
-    options = $.extend({
-        'checkInterval': 200,
+$.plugin2('expandable', {
+    '_defaultOptions': {
         'cssProperties': [
-            'border-bottom-width', 'border-left-width', 'border-right-width', 'border-top-width',
-            'box-sizing', '-moz-box-sizing', '-webkit-box-sizing',
-            'font-family', 'font-size', 'font-stretch', 'font-style', 'font-variant', 'font-weight',
-            'letter-spacing', 'line-height',
-            'padding-bottom', 'padding-left', 'padding-right', 'padding-top',
-            'word-spacing'
+            'border-bottom-width', 'border-left-width', 'border-right-width',
+            'border-top-width', '-moz-box-sizing', '-webkit-box-sizing',
+            'box-sizing', 'font-family', 'font-size', 'font-stretch',
+            'font-style', 'font-variant', 'font-weight', 'letter-spacing',
+            'line-height', 'padding-bottom', 'padding-left', 'padding-right',
+            'padding-top', 'white-space', 'word-spacing'
         ]
-    }, options);
+    },
 
-    // Bind expand event that recalculates the size.
-    this.live('expand.expandable', function() {
+    '_create': function(input) {
+        var $input = $(input);
 
-        var $input = $(this);
-        var isTextArea = $input.is('textarea');
-        var $checker = $input.data('expandable-checker');
+        $allInputs = $allInputs.add($input);
+        $input.trigger('expand');
+    },
 
-        if (!$checker) {
-            $input.css('overflow', 'hidden');
-            $checker = $('<div/>', {
-                'css': {
-                    'left': -10000,
-                    'position': 'absolute',
-                    'top': 0,
-                    'visibility': 'hidden'
+    '_init': function(selector, options) {
+        this.$caller.delegate(selector, 'expand.expandable input.expandable', function() {
+            var $input = $(this),
+                    $checker = $input.prevAll('.expandable-checker'),
+                    properties = options.cssProperties,
+                    index,
+                    size,
+                    property,
+                    inputDisplay;
+
+            // Create a hidden DIV that copies the input styles so that we can
+            // measure the height.
+            if ($checker.length === 0) {
+                $checker = $('<div/>');
+
+                for (index = 0, size = properties.length; index < size; ++ index) {
+                    property = properties[index];
+                    $checker.css(property, $input.css(property));
                 }
-            });
-            $.each(options.cssProperties, function(i, name) {
-                $checker.css(name, $input.css(name));
-            });
-            $checker.css(isTextArea ? {
-                'display': 'block',
-                'white-space': 'pre-wrap',
-                'width': $input.width()
-            } : {
-                'display': 'inline-block',
-                'white-space': 'nowrap',
-                'width': 'auto'
-            })
-            $input.data('expandable-checker', $checker);
-            $input.after($checker);
-        }
 
-        $checker.text($input.val() + 'xxx');
-        if (isTextArea) {
-            $input.height($checker.height());
-        } else {
-            $input.width($checker.width());
-        }
-    });
+                $input.css('overflow', 'hidden');
 
-    // Make sure the expand event is called initially on every element.
-    this.liveInit(function() {
-        $(this).trigger('expand');
-    });
+                if (!$checkers) {
+                    $checkers = $('<div/>', {
+                        'class': 'expandable-checkers',
+                        'css': {
+                            'left': -10000,
+                            'position': 'absolute',
+                            'top': 0,
+                            'visibility': 'hidden'
+                        }
+                    });
 
-    // Immediately re-check on user pressing enter key.
-    this.live('keyup.expandable', function(event) {
-        if (event.which == 13) {
-            $(this).trigger('expand');
-        }
-    });
+                    $(doc.body).append($checkers);
+                }
 
-    // Check every so often to cover copy/paste, etc.
-    this.live('focus.expandable', function() {
-        var $input = $(this);
-        $input.data('expandable-interval', setInterval(function() {
-            $input.trigger('expand');
-        }, options.checkInterval));
+                $checkers.append($checker);
+            }
 
-    });
-    this.live('blur.expandable', function() {
-        var $input = $(this);
-        var interval = $input.data('expandable-interval');
-        if (interval) {
-            $input.removeData('expandable-interval');
-            clearTimeout(interval);
-        }
-    });
+            inputDisplay = $input.css('display');
 
-    // To maintain chainability.
-    return this;
-}
+            $checker.
+                    css('display', inputDisplay).
+                    text($input.val() + ' foo');
 
+            if (inputDisplay === 'block') {
+                $checker.width($input.width());
+                $input.height($checker.height());
+
+            } else {
+                $input.width($checker.width());
+            }
+        });
+    }
 });
 
-})(jQuery);
+$win.resize($.throttle(200, function() {
+    $allInputs.trigger('expand');
+}));
+
+}(jQuery, window));

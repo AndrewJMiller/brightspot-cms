@@ -7,6 +7,10 @@ com.psddev.cms.tool.ToolPageContext
 // --- Logic ---
 
 ToolPageContext wp = new ToolPageContext(pageContext);
+if (wp.requireUser()) {
+    return;
+}
+
 String previewFormId = wp.createId();
 String previewTarget = wp.createId();
 
@@ -14,7 +18,7 @@ String previewTarget = wp.createId();
 
 %><% wp.include("/WEB-INF/header.jsp"); %>
 
-<h1 class="icon-page_white_find">Preview</h1>
+<h1>Preview</h1>
 
 <form action="<%= wp.url("/content/sharePreview.jsp") %>" method="post" target="_blank">
     <input name="<%= PageFilter.PREVIEW_ID_PARAMETER %>" type="hidden" value="<%= wp.param("id") %>">

@@ -1,43 +1,45 @@
-if (typeof jQuery !== 'undefined') (function($) {
+/** Automatic form submission on any input change. */
+(function($, win, undef) {
 
-// Automatic form submission on any input change.
-$.plugin('autoSubmit', {
+$.plugin2('autoSubmit', {
+    '_create': function(input) {
+        var $input = $(input),
+                $form = $(input).closest('form'),
+                lastInputs,
+                submitFunction,
+                $targetFrame;
 
-'submit': function() {
-    this.closest('form').autoSubmit('data', 'submitFunction')();
-    return this;
-},
-
-// Initializes the automatic form submission.
-'init': function() {
-    return this.liveInit(function() {
-
-        var $form = $(this).closest('form');
-        var lastInputs;
-        var submitFunction = $.throttle(500, function() {
+        submitFunction = $.throttle(500, function() {
             var inputs = $form.serialize();
+
             if (lastInputs !== inputs) {
                 lastInputs = inputs;
                 $form.submit();
             }
         });
 
-        $form.autoSubmit('data', 'submitFunction', submitFunction);
-        $form.attr('autocomplete', 'off');
-        $form.find(':input').live('change', submitFunction);
-        $form.find(':text').live('keyup', submitFunction);
-        $form.find(':text').live('focus', function() {
-            $('.frame[name=' + $form.attr('target') + ']').popup('open');
-            submitFunction.apply(this, arguments);
-        });
+        $input.data('autoSubmit-submitFunction', submitFunction);
 
-        var $targetFrame = $('.frame[name=' + $form.attr('target') + ']:not(.loading):not(.loaded)');
-        if ($targetFrame.length > 0) {
-            $form.autoSubmit('submit');
+        if ($input[0] === $form[0]) {
+            $form.find(':input').attr('autocomplete', 'off');
+            $form.delegate(':input', 'input.autoSubmit change.autoSubmit', submitFunction);
+
+        } else {
+            $input.attr('autocomplete', 'off');
+            $input.bind('input.autoSubmit change.autoSubmit', submitFunction);
         }
-    });
-}
 
+        $targetFrame = $('.frame[name=' + $form.attr('target') + ']:not(.loading):not(.loaded)');
+
+        if ($targetFrame.length > 0) {
+            submitFunction();
+        }
+    },
+
+    'submit': function() {
+        this.closestInit().data('autoSubmit-submitFunction')();
+        return this;
+    }
 });
 
-})(jQuery);
+}(jQuery, window));
